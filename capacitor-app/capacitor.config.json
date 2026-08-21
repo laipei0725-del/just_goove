@@ -1,0 +1,13 @@
+{
+  "appId": "com.peipei.justgroove",
+  "appName": "JUST GROOVE",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "Camera": {
+      "permissions": ["camera", "photos"]
+    }
+  }
+}

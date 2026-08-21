@@ -1,17 +1,32 @@
 {
   "expo": {
-    "name": "just-groove-app",
-    "slug": "just-groove-app",
+    "name": "JUST GROOVE",
+    "slug": "just-groove",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "scheme": "justgroove",
+    "orientation": "default",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.peipei.justgroove",
+      "infoPlist": {
+        "NSCameraUsageDescription": "此應用程式需要使用相機來錄影並與教學影片進行比對。",
+        "NSMicrophoneUsageDescription": "此應用程式需要使用麥克風來進行錄影收音與語音指令辨識。",
+        "NSPhotoLibraryUsageDescription": "此應用程式需要讀取您的相簿以匯入舞蹈練習影片。",
+        "NSPhotoLibraryAddUsageDescription": "此應用程式需要寫入權限以儲存您錄製的練習影片到相簿。"
+      }
     },
     "android": {
+      "package": "com.peipei.justgroove",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
+      ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#0D0D0D",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -19,6 +34,32 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "此應用程式需要使用相機來錄影並與教學影片進行比對。",
+          "microphonePermission": "此應用程式需要使用麥克風來進行錄影收音。",
+          "barcodeScannerEnabled": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "允許 JUST GROOVE 從相簿匯入舞蹈練習影片。"
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "允許 JUST GROOVE 讀取練舞影片。",
+          "savePhotosPermission": "允許 JUST GROOVE 將練習錄影儲存到相簿。",
+          "isAccessMediaLocationEnabled": false
+        }
+      ],
+      "expo-sharing",
+      "expo-image"
+    ]
   }
 }
