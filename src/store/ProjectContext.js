@@ -1,7 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY = '@just-groove/projects-v1';
+const BACKUP_STORAGE_KEY = '@just-groove/projects-v1-last-known-good';
 const ProjectContext = createContext(null);
 
 const normalizeProject = (project) => ({
@@ -27,17 +28,67 @@ const normalizeProject = (project) => ({
 export function ProjectProvider({ children }) {
   const [projects, setProjects] = useState([]);
   const [hydrated, setHydrated] = useState(false);
+  const [storageError, setStorageError] = useState(null);
+  const [storageReady, setStorageReady] = useState(false);
+  const lastPersistedValue = useRef(null);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((value) => setProjects(value ? JSON.parse(value).map(normalizeProject) : []))
-      .catch(() => setProjects([]))
-      .finally(() => setHydrated(true));
+    let active = true;
+
+    const loadProjects = async () => {
+      try {
+        const value = await AsyncStorage.getItem(STORAGE_KEY);
+        if (!active) return;
+
+        // An empty key means this is a new installation. A malformed value is
+        // different: never replace it with an empty list, because that would
+        // erase an existing user's projects after a transient read failure.
+        if (value === null) {
+          lastPersistedValue.current = JSON.stringify([]);
+          setProjects([]);
+        } else {
+          const parsed = JSON.parse(value);
+          if (!Array.isArray(parsed)) throw new Error('Project storage is not an array');
+          lastPersistedValue.current = value;
+          setProjects(parsed.map(normalizeProject));
+        }
+        setStorageReady(true);
+      } catch (error) {
+        console.warn('JUST GROOVE project storage was not loaded; preserving existing data.', error);
+        if (active) setStorageError('練舞專案暫時無法讀取。為保護既有資料，APP 不會覆寫或清除你的專案。');
+      } finally {
+        if (active) setHydrated(true);
+      }
+    };
+
+    loadProjects();
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (hydrated) AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(projects)).catch(() => {});
-  }, [hydrated, projects]);
+    if (!hydrated || !storageReady) return undefined;
+    const nextValue = JSON.stringify(projects);
+    if (nextValue === lastPersistedValue.current) return undefined;
+
+    let active = true;
+    const persistProjects = async () => {
+      try {
+        // Keep the last verified value as a recovery copy before changing the
+        // main key. Project media itself is never touched by this operation.
+        if (lastPersistedValue.current !== null) {
+          await AsyncStorage.setItem(BACKUP_STORAGE_KEY, lastPersistedValue.current);
+        }
+        await AsyncStorage.setItem(STORAGE_KEY, nextValue);
+        if (active) lastPersistedValue.current = nextValue;
+      } catch (error) {
+        console.warn('JUST GROOVE project storage was not saved.', error);
+        if (active) setStorageError('新的變更暫時無法儲存；既有專案資料沒有被刪除。');
+      }
+    };
+
+    persistProjects();
+    return () => { active = false; };
+  }, [hydrated, projects, storageReady]);
 
   const addProject = useCallback((input) => {
     const project = normalizeProject({ ...input, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` });
@@ -59,7 +110,7 @@ export function ProjectProvider({ children }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ projects, hydrated, addProject, updateProject, deleteProject, duplicateProject }), [projects, hydrated, addProject, updateProject, deleteProject, duplicateProject]);
+  const value = useMemo(() => ({ projects, hydrated, storageError, addProject, updateProject, deleteProject, duplicateProject }), [projects, hydrated, storageError, addProject, updateProject, deleteProject, duplicateProject]);
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 }
 

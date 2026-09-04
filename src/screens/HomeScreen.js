@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { Image } from 'expo-image';
@@ -87,7 +87,7 @@ function ProjectCover({ project, onThumbnailReady }) {
 
 export default function HomeScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { projects, hydrated, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
+  const { projects, hydrated, storageError, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
   const [addOpen, setAddOpen] = useState(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -132,13 +132,24 @@ export default function HomeScreen({ navigation }) {
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
       <View style={styles.header}><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>選一段，開始練。</Text></View><Pressable style={styles.headerButton} onPress={() => Alert.alert('APP 設定', '練舞相關設定會保存在每個專案中。')} accessibilityLabel="APP 設定"><Ionicons name="settings-outline" size={23} color={C.text} /></Pressable></View>
       <Pressable style={styles.primary} onPress={() => setAddOpen(true)}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
+      {storageError ? <View style={styles.storageWarning}><Ionicons name="shield-checkmark-outline" size={18} color={C.lime} /><Text style={styles.storageWarningText}>{storageError}</Text></View> : null}
       <View style={styles.sectionRow}><Text style={styles.sectionTitle}>我的練舞專案</Text><Text style={styles.count}>{projects.length}</Text></View>
       {!hydrated ? <ActivityIndicator color={C.lime} style={{ marginTop: 60 }} /> : (
         <FlatList data={projects} keyExtractor={(item) => item.id} renderItem={renderProject} numColumns={2} columnWrapperStyle={styles.columns} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} ListEmptyComponent={<View style={styles.empty}><Ionicons name="albums-outline" size={38} color={C.muted} /><Text style={styles.emptyTitle}>還沒有練舞專案</Text><Text style={styles.emptyText}>從手機相簿或 YouTube 加入第一支影片。</Text></View>} />
       )}
 
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}><Pressable style={styles.backdrop} onPress={() => setAddOpen(false)}><View style={styles.sheet}><Text style={styles.sheetTitle}>新增練舞專案</Text><Pressable style={styles.option} onPress={importLocal}><Ionicons name="images-outline" size={22} color={C.lime} /><View><Text style={styles.optionTitle}>從手機相簿選擇</Text><Text style={styles.optionText}>使用你已保存的練舞影片</Text></View></Pressable><Pressable style={styles.option} onPress={() => { setAddOpen(false); setYoutubeOpen(true); }}><Ionicons name="logo-youtube" size={22} color="#FF5D5D" /><View><Text style={styles.optionTitle}>加入 YouTube</Text><Text style={styles.optionText}>貼上影片或 Shorts 連結</Text></View></Pressable></View></Pressable></Modal>
-      <Modal visible={youtubeOpen} transparent animationType="fade" onRequestClose={() => setYoutubeOpen(false)}><View style={styles.backdrop}><View style={styles.sheet}><Text style={styles.sheetTitle}>YouTube 練舞專案</Text><TextInput value={youtubeUrl} onChangeText={setYoutubeUrl} placeholder="貼上 YouTube 連結" placeholderTextColor="#69696D" autoCapitalize="none" autoCorrect={false} keyboardType="url" style={styles.input} /><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setYoutubeOpen(false)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={importYoutube}><Text style={styles.confirmText}>建立專案</Text></Pressable></View></View></View></Modal>
+      <Modal visible={youtubeOpen} transparent animationType="fade" onRequestClose={() => setYoutubeOpen(false)}>
+        <KeyboardAvoidingView style={styles.keyboardAvoider} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Pressable style={styles.centeredBackdrop} onPress={() => setYoutubeOpen(false)}>
+            <View style={[styles.sheet, styles.youtubeSheet]} onStartShouldSetResponder={() => true}>
+              <Text style={styles.sheetTitle}>YouTube 練舞專案</Text>
+              <TextInput value={youtubeUrl} onChangeText={setYoutubeUrl} placeholder="貼上 YouTube 連結" placeholderTextColor="#69696D" autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="done" style={styles.input} />
+              <View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setYoutubeOpen(false)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={importYoutube}><Text style={styles.confirmText}>建立專案</Text></Pressable></View>
+            </View>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -151,4 +162,9 @@ Object.assign(styles, {
   cover: { aspectRatio: 1 },
   logoFallback: { width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center', backgroundColor: C.card },
   logoImage: { width: '42%', height: '42%' },
+  keyboardAvoider: { flex: 1 },
+  centeredBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,.72)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  youtubeSheet: { width: '100%', maxWidth: 520 },
+  storageWarning: { flexDirection: 'row', gap: 9, alignItems: 'flex-start', borderRadius: 14, backgroundColor: '#20281A', borderWidth: 1, borderColor: '#4B6421', padding: 12, marginBottom: 16 },
+  storageWarningText: { flex: 1, color: C.text, fontSize: 12, lineHeight: 18 },
 });

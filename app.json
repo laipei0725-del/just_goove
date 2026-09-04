@@ -9,6 +9,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
+      "requireFullScreen": true,
       "bundleIdentifier": "com.peipei.justgroove",
       "infoPlist": {
         "NSCameraUsageDescription": "此應用程式需要使用相機來錄影並與教學影片進行比對。",
@@ -59,7 +60,15 @@
         }
       ],
       "expo-sharing",
-      "expo-image"
+      "expo-image",
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "DEFAULT"
+        }
+      ],
+      "expo-font",
+      "expo-video"
     ]
   }
 }

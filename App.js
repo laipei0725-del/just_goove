@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Text, View } from 'react-native';
 import { NavigationContainer, DarkTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -16,7 +16,7 @@ const theme = {
 };
 
 export default function App() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded] = useFonts(Platform.OS === 'web' ? {} : {
     'ZenGothic-Medium': ZenKakuGothicNew_500Medium,
     'ZenGothic-Bold': ZenKakuGothicNew_700Bold,
     JetBrainsMono: JetBrainsMono_500Medium,

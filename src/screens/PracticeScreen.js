@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Linking, Modal, PanResponder, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Alert, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { StatusBar } from 'expo-status-bar';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as MediaLibrary from 'expo-media-library';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useEvent } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -12,15 +13,32 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import YoutubePlayer from 'react-native-youtube-iframe';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProjects } from '../store/ProjectContext';
+const { getAspectFitSize } = require('../utils/youtubeLayout.cjs');
 
 const C = { bg: '#0D0D0D', panel: '#1B1B1B', line: '#343434', lime: '#C8FF35', text: '#F4F4F2', muted: '#99999E', danger: '#FF6868' };
 const YT_RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+const YOUTUBE_PLAYER_PARAMS = Object.freeze({ controls: false, preventFullScreen: true, rel: false, iv_load_policy: 3 });
+const YOUTUBE_WEBVIEW_PROPS = Object.freeze({ allowsInlineMediaPlayback: true, mediaPlaybackRequiresUserAction: false });
+const YOUTUBE_CONTROLS_HEIGHT = 124;
+const CONTROLS_AUTO_HIDE_MS = 3000;
 const finiteNumber = (value, fallback = 0) => Number.isFinite(value) ? value : fallback;
 const tenth = (value) => Math.round(finiteNumber(value) * 10) / 10;
 const time = (value) => { const safe = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0; return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`; };
 const abTime = (value) => { const safe = Math.max(0, tenth(value)); return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, '0')}.${Math.round((safe % 1) * 10)}`; };
+const nearestYoutubeRate = (requested, rates = YT_RATES) => rates.reduce((nearest, value) => Math.abs(value - requested) < Math.abs(nearest - requested) ? value : nearest, rates[0]);
+const speedLabel = (value) => `${Number(finiteNumber(value, 1).toFixed(2))}x`;
+let mediaLibraryPromise;
+const loadMediaLibrary = () => {
+  if (Platform.OS === 'web') return Promise.resolve(null);
+  if (!mediaLibraryPromise) mediaLibraryPromise = import('expo-media-library');
+  return mediaLibraryPromise;
+};
+const isLandscapeOrientation = (orientation) => (
+  orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT
+  || orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT
+);
 
-function ABTimeline({ min, max, a, b, onAChange, onBChange }) {
+function ABTimeline({ min, max, a, b, frames = [], onAChange, onBChange }) {
   const [width, setWidth] = useState(1);
   const widthRef = useRef(1);
   const range = Math.max(0.1, max - min);
@@ -43,16 +61,19 @@ function ABTimeline({ min, max, a, b, onAChange, onBChange }) {
   const bX = xFor(visualB);
   const rangeLeft = Math.min(aX, bX);
   const rangeWidth = Math.abs(bX - aX);
-  return <View style={styles.abTimeline} onLayout={(event) => { const next = event.nativeEvent.layout.width; widthRef.current = next; setWidth(next); }}>
+  return <View style={styles.abTimeline} onLayout={(event) => { const next = event.nativeEvent.layout.width; widthRef.current = next; setWidth(next); }} accessibilityLabel="AB 影片影格時間軸">
     <Pressable style={styles.abTimelineTouch} onPress={(event) => {
       const value = valueFor(event.nativeEvent.locationX);
       if (Math.abs(value - visualA) <= Math.abs(value - visualB)) onAChange(value);
       else onBChange(value);
     }} />
-    <View style={styles.abTrack} />
-    {a != null && b != null && <View style={[styles.abRange, { left: rangeLeft, width: rangeWidth }]} />}
-    <View {...aResponder.panHandlers} style={[styles.abHandle, styles.abHandleA, a == null && styles.abHandleUnset, { left: aX - 14 }]}><Text style={styles.abHandleText}>A</Text></View>
-    <View {...bResponder.panHandlers} style={[styles.abHandle, styles.abHandleB, b == null && styles.abHandleUnset, { left: bX - 14 }]}><Text style={styles.abHandleText}>B</Text></View>
+    <View style={styles.abFilmstrip} pointerEvents="none">
+      {frames.length ? frames.map((frame, index) => <Image key={`${index}-${frame?.uri || frame}`} source={frame} style={styles.abFrame} contentFit="cover" />) : Array.from({ length: 12 }, (_, index) => <View key={index} style={[styles.abFrame, styles.abFramePlaceholder]} />)}
+    </View>
+    <View style={styles.abTrack} pointerEvents="none" />
+    {a != null && b != null && <View pointerEvents="none" style={[styles.abRange, { left: rangeLeft, width: rangeWidth }]} />}
+    <View {...aResponder.panHandlers} style={[styles.abHandle, styles.abHandleA, a == null && styles.abHandleUnset, { left: aX - 16 }]}><Text style={styles.abHandleText}>A</Text></View>
+    <View {...bResponder.panHandlers} style={[styles.abHandle, styles.abHandleB, b == null && styles.abHandleUnset, { left: bX - 16 }]}><Text style={styles.abHandleText}>B</Text></View>
   </View>;
 }
 
@@ -71,10 +92,22 @@ export default function PracticeScreen({ route, navigation }) {
   const ytRef = useRef(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
-  const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions({ writeOnly: true });
+  const [mediaPermission, setMediaPermission] = useState(null);
+  const requestMediaPermission = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      const unsupported = { granted: false, status: 'denied', canAskAgain: false };
+      setMediaPermission(unsupported);
+      return unsupported;
+    }
+    const mediaLibrary = await loadMediaLibrary();
+    const permission = await mediaLibrary.requestPermissionsAsync();
+    setMediaPermission(permission);
+    return permission;
+  }, []);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(finiteNumber(project?.speed, 1));
   const [youtubeRates, setYoutubeRates] = useState(YT_RATES);
+  const [youtubeReady, setYoutubeReady] = useState(false);
   const [playMode, setPlayModeState] = useState(project?.playMode || 'full-loop');
   const [ytPosition, setYtPosition] = useState(finiteNumber(project?.position));
   const [ytDuration, setYtDuration] = useState(0);
@@ -90,6 +123,10 @@ export default function PracticeScreen({ route, navigation }) {
   const [panelOpen, setPanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [screenOrientation, setScreenOrientation] = useState(ScreenOrientation.Orientation.UNKNOWN);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [youtubeViewportSize, setYoutubeViewportSize] = useState({ width: 0, height: 0 });
+  const controlsHideTimerRef = useRef(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [countdown, setCountdown] = useState(null);
@@ -97,7 +134,15 @@ export default function PracticeScreen({ route, navigation }) {
   const [draftA, setDraftA] = useState(null);
   const [draftB, setDraftB] = useState(null);
   const [abEditTarget, setAbEditTarget] = useState('a');
+  const [abFrames, setAbFrames] = useState([]);
   const source = project?.source;
+  const isYoutube = source?.type === 'youtube';
+  const isVerticalYoutube = source?.type === 'youtube' && (source.uri?.includes('/shorts/') || project?.aspectRatio === '9:16' || project?.orientation === 'portrait');
+  const isLandscape = isLandscapeOrientation(screenOrientation)
+    || (screenOrientation === ScreenOrientation.Orientation.UNKNOWN && width > height);
+  const immersiveYoutube = isYoutube && (fullscreen || isLandscape);
+  const fullscreenLayout = isYoutube ? immersiveYoutube : fullscreen;
+  const controlsShown = !isYoutube || controlsVisible;
   const player = useVideoPlayer(source?.type === 'local' ? source.uri : null, (p) => {
     p.timeUpdateEventInterval = 0.2;
     if (source?.type === 'local') p.currentTime = project?.position || 0;
@@ -116,6 +161,94 @@ export default function PracticeScreen({ route, navigation }) {
   const timelineValue = Math.max(trimStart, Math.min(position, timelineMaximum));
   const activeAbRange = draftA != null && draftB != null ? { start: draftA, end: draftB } : activeBookmark;
 
+  const clearControlsHideTimer = useCallback(() => {
+    if (controlsHideTimerRef.current) {
+      clearTimeout(controlsHideTimerRef.current);
+      controlsHideTimerRef.current = null;
+    }
+  }, []);
+
+  const keepYoutubeControlsVisible = useCallback((autoHide = true) => {
+    if (!isYoutube) return;
+    clearControlsHideTimer();
+    setControlsVisible(true);
+    if (autoHide && playing && !panelOpen && !settingsOpen && !recording) {
+      controlsHideTimerRef.current = setTimeout(() => {
+        setControlsVisible(false);
+        controlsHideTimerRef.current = null;
+      }, CONTROLS_AUTO_HIDE_MS);
+    }
+  }, [clearControlsHideTimer, isYoutube, panelOpen, playing, recording, settingsOpen]);
+
+  const toggleYoutubeControls = useCallback(() => {
+    if (!isYoutube || panelOpen || settingsOpen || recording) return;
+    if (controlsVisible) {
+      clearControlsHideTimer();
+      setControlsVisible(false);
+    } else {
+      keepYoutubeControlsVisible(true);
+    }
+  }, [clearControlsHideTimer, controlsVisible, isYoutube, keepYoutubeControlsVisible, panelOpen, recording, settingsOpen]);
+
+  const handleYoutubeViewportLayout = useCallback((event) => {
+    const { width: nextWidth, height: nextHeight } = event.nativeEvent.layout;
+    if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight) || nextWidth <= 0 || nextHeight <= 0) return;
+    setYoutubeViewportSize((current) => (
+      Math.abs(current.width - nextWidth) < 0.5 && Math.abs(current.height - nextHeight) < 0.5
+        ? current
+        : { width: nextWidth, height: nextHeight }
+    ));
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const applyOrientation = (orientation) => {
+      if (!active || !orientation || orientation === ScreenOrientation.Orientation.UNKNOWN) return;
+      setScreenOrientation(orientation);
+      if (isYoutube) setFullscreen(isLandscapeOrientation(orientation));
+    };
+
+    ScreenOrientation.getOrientationAsync().then(applyOrientation).catch(() => {});
+    const subscription = ScreenOrientation.addOrientationChangeListener((event) => {
+      applyOrientation(event.orientationInfo.orientation);
+    });
+
+    return () => {
+      active = false;
+      subscription.remove();
+      if (isYoutube) ScreenOrientation.unlockAsync().catch(() => {});
+    };
+  }, [isYoutube]);
+
+  useEffect(() => {
+    if (!isYoutube) return undefined;
+    if (!playing || panelOpen || settingsOpen || recording) {
+      clearControlsHideTimer();
+      setControlsVisible(true);
+      return undefined;
+    }
+    keepYoutubeControlsVisible(true);
+    return clearControlsHideTimer;
+  }, [clearControlsHideTimer, isYoutube, keepYoutubeControlsVisible, panelOpen, playing, recording, settingsOpen]);
+
+  useEffect(() => clearControlsHideTimer, [clearControlsHideTimer]);
+
+  useEffect(() => {
+    let active = true;
+    setAbFrames([]);
+    if (!timelineMaximum) return undefined;
+    const count = 12;
+    const timestamps = Array.from({ length: count }, (_, index) => trimStart + ((timelineMaximum - trimStart) * index) / Math.max(1, count - 1));
+    if (source?.type === 'youtube') {
+      if (source.coverUri) setAbFrames(timestamps.map(() => source.coverUri));
+      return undefined;
+    }
+    player.generateThumbnailsAsync(timestamps, { maxWidth: 160, maxHeight: 100 }).then((images) => {
+      if (active && images?.length) setAbFrames(images);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [player, source?.type, source?.coverUri, timelineMaximum, trimStart]);
+
   const setPlayMode = useCallback((value) => {
     setPlayModeState(value);
     if (project?.id) updateProject(project.id, { playMode: value });
@@ -128,7 +261,7 @@ export default function PracticeScreen({ route, navigation }) {
       const rates = [...new Set((available || []).filter((value) => Number.isFinite(value) && value > 0))].sort((a, b) => a - b);
       if (!rates.length) return;
       setYoutubeRates(rates);
-      setSpeed((current) => rates.reduce((nearest, value) => Math.abs(value - current) < Math.abs(nearest - current) ? value : nearest, rates[0]));
+      setSpeed((current) => nearestYoutubeRate(current, rates));
     } catch {}
   }, [source?.type]);
 
@@ -140,6 +273,23 @@ export default function PracticeScreen({ route, navigation }) {
     player.playbackRate = speed;
     if (source?.type === 'local') playing ? player.play() : player.pause();
   }, [player, playing, source?.type, speed]);
+
+  const togglePlayback = useCallback(() => {
+    if (source?.type === 'youtube' && !youtubeReady) return;
+    keepYoutubeControlsVisible(true);
+    setPlaying((current) => !current);
+  }, [keepYoutubeControlsVisible, source?.type, youtubeReady]);
+
+  const handleYoutubeStateChange = useCallback((state) => {
+    if (state === 'playing') setPlaying(true);
+    if (state === 'paused' || state === 'ended') setPlaying(false);
+    if (state === 'playing' || state === 'video cued') refreshYoutubeRates();
+  }, [refreshYoutubeRates]);
+
+  const handleYoutubeReady = useCallback(() => {
+    setYoutubeReady(true);
+    refreshYoutubeRates();
+  }, [refreshYoutubeRates]);
 
   useEffect(() => {
     if (source?.type !== 'youtube' || !playing) return undefined;
@@ -175,8 +325,6 @@ export default function PracticeScreen({ route, navigation }) {
     return () => clearTimeout(timer);
   }, [project?.id, speed, position, cameraMode, updateProject]);
 
-  useEffect(() => () => { ScreenOrientation.unlockAsync().catch(() => {}); }, []);
-
   const seek = useCallback((value) => {
     const requested = finiteNumber(value, trimStart);
     const bounded = Math.max(trimStart, Math.min(requested, timelineMaximum));
@@ -196,6 +344,7 @@ export default function PracticeScreen({ route, navigation }) {
   }, [draftA, draftB, setPlayMode, timelineMaximum, trimStart]);
 
   const openAbPanel = () => {
+    keepYoutubeControlsVisible(false);
     setAbEditTarget(draftA == null ? 'a' : draftB == null ? 'b' : 'a');
     setPanelOpen(true);
   };
@@ -207,14 +356,18 @@ export default function PracticeScreen({ route, navigation }) {
     setPlayMode('full-loop');
   };
 
-  const adjustSpeed = (direction) => setSpeed((old) => {
+  const adjustSpeed = (direction) => {
+    keepYoutubeControlsVisible(true);
+    const old = speed;
     if (source?.type === 'youtube') {
       const rates = youtubeRates.length ? youtubeRates : YT_RATES;
-      const nearest = rates.reduce((a, b) => Math.abs(b - old) < Math.abs(a - old) ? b : a);
-      return rates[Math.max(0, Math.min(rates.length - 1, rates.indexOf(nearest) + direction))];
+      const nearest = nearestYoutubeRate(old, rates);
+      const next = rates[Math.max(0, Math.min(rates.length - 1, rates.indexOf(nearest) + direction))];
+      if (next !== old) setSpeed(next);
+      return;
     }
-    return Math.max(0.1, Math.min(2, Number((old + direction * 0.1).toFixed(1))));
-  });
+    setSpeed(Math.max(0.1, Math.min(2, Number((old + direction * 0.1).toFixed(1)))));
+  };
 
   const toggleCamera = async () => {
     if (!cameraVisible && !cameraPermission?.granted) {
@@ -253,14 +406,27 @@ export default function PracticeScreen({ route, navigation }) {
       await FileSystem.copyAsync({ from: result.uri, to: savedUri });
       let assetId = null;
       let permission = mediaPermission;
-      if (!permission?.granted) permission = await requestMediaPermission();
-      if (permission?.granted) assetId = (await MediaLibrary.createAssetAsync(savedUri)).id;
+      if (Platform.OS !== 'web') {
+        if (!permission?.granted) permission = await requestMediaPermission();
+        const mediaLibrary = await loadMediaLibrary();
+        if (permission?.granted && mediaLibrary) {
+          if (typeof mediaLibrary.createAssetAsync === 'function') {
+            assetId = (await mediaLibrary.createAssetAsync(savedUri)).id;
+          } else if (mediaLibrary.Asset?.create) {
+            assetId = (await mediaLibrary.Asset.create(savedUri)).id;
+          }
+        }
+      }
       updateProject(project.id, { recordings: [...(project.recordings || []), { id: `${Date.now()}`, uri: savedUri, assetId, duration: recordSeconds, createdAt: Date.now() }] });
       Alert.alert('錄影已保存', permission?.granted ? '已儲存在練舞專案與手機相簿。' : '已儲存在練舞專案；尚未取得相簿寫入權限。');
     } catch { Alert.alert('保存失敗', '錄影已結束，但檔案無法保存，請確認儲存空間與相簿權限。'); }
   };
 
   const beginRecording = async () => {
+    if (Platform.OS === 'web') {
+      Alert.alert('網頁版暫不支援錄影', '請使用 iPhone 或 iPad App 測試相機錄影與存入相簿。');
+      return;
+    }
     let nextCameraPermission = cameraPermission;
     if (!nextCameraPermission?.granted) nextCameraPermission = await requestCameraPermission();
     if (!nextCameraPermission.granted) {
@@ -298,7 +464,10 @@ export default function PracticeScreen({ route, navigation }) {
   };
 
   const stopRecording = () => cameraRef.current?.stopRecording();
-  const toggleRecording = () => recording ? stopRecording() : beginRecording();
+  const toggleRecording = () => {
+    keepYoutubeControlsVisible(false);
+    return recording ? stopRecording() : beginRecording();
+  };
 
   const addBookmark = () => {
     if (draftA == null || draftB == null || draftB <= draftA) return Alert.alert('尚未完成 AB 範圍', '請先拖曳或設定 A、B 點，且 B 必須晚於 A。');
@@ -331,7 +500,26 @@ export default function PracticeScreen({ route, navigation }) {
     const landscape = current === ScreenOrientation.Orientation.LANDSCAPE_LEFT || current === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
     await ScreenOrientation.lockAsync(landscape ? ScreenOrientation.OrientationLock.PORTRAIT_UP : ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT);
   };
-  const toggleFullscreen = () => setFullscreen((value) => !value);
+  const toggleFullscreen = async () => {
+    if (!isYoutube) {
+      setFullscreen((value) => !value);
+      return;
+    }
+
+    keepYoutubeControlsVisible(true);
+    const nextFullscreen = !immersiveYoutube;
+    setFullscreen(nextFullscreen);
+    try {
+      await ScreenOrientation.lockAsync(
+        nextFullscreen
+          ? ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT
+          : ScreenOrientation.OrientationLock.PORTRAIT_UP,
+      );
+    } catch {
+      // The layout still follows the real orientation listener if iOS rejects a
+      // temporary lock (for example while another system transition is active).
+    }
+  };
 
   const panelPan = useMemo(() => PanResponder.create({ onMoveShouldSetPanResponder: (_, gesture) => gesture.dy > 12, onPanResponderRelease: (_, gesture) => { if (gesture.dy > 70) setPanelOpen(false); } }), []);
   const videoPinch = useMemo(() => PanResponder.create({
@@ -358,35 +546,54 @@ export default function PracticeScreen({ route, navigation }) {
 
   const videoFit = project.crop === 'cover' ? 'cover' : 'contain';
   const cameraStyle = cameraMode === 'split' ? styles.cameraSplit : cameraMode === 'overlay' ? styles.cameraOverlay : styles.cameraPip;
-  const stageHeight = fullscreen ? height : Math.max(390, Math.min(height * 0.7, width * 1.35));
+  const localStageHeight = fullscreen ? height : Math.max(390, Math.min(height * 0.7, width * 1.35));
+  const youtubeAspectRatio = project.aspectRatio === '1:1' ? 1 : isVerticalYoutube ? 9 / 16 : 16 / 9;
+  const fallbackYoutubeWidth = Math.max(1, width - (immersiveYoutube ? insets.left + insets.right : 24));
+  const fallbackYoutubeHeight = Math.max(1, height - (immersiveYoutube ? insets.bottom : insets.top + 62) - (controlsShown ? YOUTUBE_CONTROLS_HEIGHT : 0));
+  const youtubeFrame = getAspectFitSize(
+    youtubeViewportSize.width || fallbackYoutubeWidth,
+    youtubeViewportSize.height || fallbackYoutubeHeight,
+    youtubeAspectRatio,
+  );
+  const youtubeViewportBottom = controlsShown ? YOUTUBE_CONTROLS_HEIGHT : 0;
+  const rootSafeArea = fullscreenLayout
+    ? {
+      paddingTop: 0,
+      paddingBottom: immersiveYoutube ? insets.bottom : 0,
+      paddingLeft: immersiveYoutube ? insets.left : 0,
+      paddingRight: immersiveYoutube ? insets.right : 0,
+    }
+    : { paddingTop: insets.top, paddingBottom: 0, paddingLeft: 0, paddingRight: 0 };
 
   return (
-    <View style={[styles.screen, fullscreen && styles.fullscreen, { paddingTop: fullscreen ? 0 : insets.top }]}>
-      {!fullscreen && <View style={styles.header}><Pressable style={styles.iconButton} onPress={() => navigation.goBack()} accessibilityLabel="返回首頁"><Ionicons name="arrow-back" size={24} color={C.text} /></Pressable><Text numberOfLines={1} style={styles.headerTitle}>{project.title}</Text><Pressable style={styles.iconButton} onPress={() => setSettingsOpen(true)} accessibilityLabel="練舞設定"><Ionicons name="settings-outline" size={22} color={C.text} /></Pressable></View>}
-      <View style={[styles.stage, { height: stageHeight, borderRadius: fullscreen ? 0 : 25 }]}>
+    <View style={[styles.screen, fullscreenLayout && styles.fullscreen, rootSafeArea]}>
+      <StatusBar style="light" hidden={immersiveYoutube} />
+      {!fullscreenLayout && <View style={styles.header}><Pressable style={styles.iconButton} onPress={() => navigation.goBack()} accessibilityLabel="返回首頁"><Ionicons name="arrow-back" size={24} color={C.text} /></Pressable><Text numberOfLines={1} style={styles.headerTitle}>{project.title}</Text><Pressable style={styles.iconButton} onPress={() => { keepYoutubeControlsVisible(false); setSettingsOpen(true); }} accessibilityLabel="練舞設定"><Ionicons name="settings-outline" size={22} color={C.text} /></Pressable></View>}
+      <View {...videoPinch.panHandlers} style={[styles.stage, isYoutube && styles.youtubeStage, fullscreenLayout && styles.stageFullscreen, !isYoutube && { height: localStageHeight }, { borderRadius: fullscreenLayout ? 0 : 25 }]}>
         <View
-          {...videoPinch.panHandlers}
-          style={[styles.videoLayer, { transform: [{ scaleX: mirrored ? -videoZoom : videoZoom }, { scaleY: videoZoom }] }]}
+          onLayout={isYoutube ? handleYoutubeViewportLayout : undefined}
+          style={[styles.videoLayer, isYoutube && styles.youtubeVideoLayer, isYoutube && { bottom: youtubeViewportBottom }, { transform: [{ scaleX: mirrored ? -videoZoom : videoZoom }, { scaleY: videoZoom }] }]}
           accessibilityLabel="影片畫面，可用雙指放大縮小"
         >
-          {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} /> : <YoutubePlayer ref={ytRef} height="100%" width="100%" play={playing} videoId={source.id} playbackRate={speed} onReady={refreshYoutubeRates} onPlaybackRateChange={(rate) => Number.isFinite(rate) && setSpeed(rate)} onChangeState={(state) => { setPlaying(state === 'playing'); if (state === 'playing' || state === 'video cued') refreshYoutubeRates(); }} />}
+          {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} /> : <YoutubePlayer ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={speed} initialPlayerParams={YOUTUBE_PLAYER_PARAMS} webViewProps={YOUTUBE_WEBVIEW_PROPS} onReady={handleYoutubeReady} onPlaybackRateChange={(rate) => { const actual = Number(rate); if (Number.isFinite(actual)) setSpeed(actual); }} onChangeState={handleYoutubeStateChange} />}
         </View>
+        {isYoutube && <Pressable style={[styles.youtubeTapTarget, { bottom: youtubeViewportBottom }]} onPress={toggleYoutubeControls} accessibilityLabel={controlsVisible ? '隱藏播放控制' : '顯示播放控制'} />}
         {cameraVisible && <View style={[styles.camera, cameraStyle]}><CameraView ref={cameraRef} style={styles.fill} facing="front" mirror mode="video" active={cameraVisible} onCameraReady={() => { cameraReadyRef.current = true; setCameraReady(true); }} onMountError={(event) => { cameraReadyRef.current = false; setCameraReady(false); Alert.alert('相機啟動失敗', event.message); }} /><View style={styles.liveBadge}><Text style={styles.liveText}>{recording ? `REC ${time(recordSeconds)}` : cameraReady ? 'LIVE' : '準備中'}</Text></View></View>}
         {countdown != null && <View style={styles.countdown}><Text style={styles.countdownText}>{countdown}</Text></View>}
-        <View style={styles.sideTools}>
-          <Pressable style={[styles.roundTool, mirrored && styles.activeTool]} onPress={() => setMirrored((value) => !value)} accessibilityLabel="鏡像"><Ionicons name="swap-horizontal" size={21} color={mirrored ? C.bg : C.text} /></Pressable>
-          <Pressable style={[styles.roundTool, cameraVisible && styles.activeTool]} onPress={toggleCamera} accessibilityLabel="開啟或關閉相機"><Ionicons name="camera-outline" size={21} color={cameraVisible ? C.bg : C.text} /></Pressable>
-          <Pressable style={styles.roundTool} onPress={rotate} accessibilityLabel="切換直向或橫向"><Ionicons name="phone-landscape-outline" size={21} color={C.text} /></Pressable>
-          <Pressable style={styles.roundTool} onPress={toggleFullscreen} accessibilityLabel="切換全螢幕"><Ionicons name={fullscreen ? 'contract-outline' : 'expand-outline'} size={21} color={C.text} /></Pressable>
-        </View>
-        <View style={styles.timeline}><Text style={styles.clock}>{time(position)}</Text><Slider style={styles.slider} minimumValue={trimStart} maximumValue={timelineMaximum} value={timelineValue} onSlidingComplete={seek} minimumTrackTintColor={C.lime} maximumTrackTintColor="#56565A" thumbTintColor={C.text} /><Text style={styles.clock}>{time(total)}</Text></View>
-        <View style={styles.bottomBar}>
+        {controlsShown && <View style={styles.sideTools}>
+          <Pressable style={[styles.roundTool, mirrored && styles.activeTool]} onPress={() => { keepYoutubeControlsVisible(true); setMirrored((value) => !value); }} accessibilityLabel="鏡像"><Ionicons name="swap-horizontal" size={21} color={mirrored ? C.bg : C.text} /></Pressable>
+          <Pressable style={[styles.roundTool, cameraVisible && styles.activeTool]} onPress={() => { keepYoutubeControlsVisible(true); toggleCamera(); }} accessibilityLabel="開啟或關閉相機"><Ionicons name="camera-outline" size={21} color={cameraVisible ? C.bg : C.text} /></Pressable>
+          {!isYoutube && <Pressable style={styles.roundTool} onPress={rotate} accessibilityLabel="切換直向或橫向"><Ionicons name="phone-landscape-outline" size={21} color={C.text} /></Pressable>}
+          <Pressable style={styles.roundTool} onPress={toggleFullscreen} accessibilityLabel="切換全螢幕"><Ionicons name={fullscreenLayout ? 'contract-outline' : 'expand-outline'} size={21} color={C.text} /></Pressable>
+        </View>}
+        {controlsShown && <View style={styles.timeline}><Text style={styles.clock}>{time(position)}</Text><Slider style={styles.slider} minimumValue={trimStart} maximumValue={timelineMaximum} value={timelineValue} onSlidingStart={() => keepYoutubeControlsVisible(false)} onSlidingComplete={(value) => { seek(value); keepYoutubeControlsVisible(true); }} minimumTrackTintColor={C.lime} maximumTrackTintColor="#56565A" thumbTintColor={C.text} /><Text style={styles.clock}>{time(total)}</Text></View>}
+        {controlsShown && <View style={styles.bottomBar}>
           <Pressable style={styles.barButton} onPress={openAbPanel}><Ionicons name="bookmark-outline" size={21} color={playMode === 'ab-loop' ? C.lime : C.text} /><Text style={styles.barLabel}>AB</Text></Pressable>
           <Pressable style={styles.barButton} onPress={toggleRecording}><Ionicons name={recording ? 'stop-circle' : 'radio-button-on'} size={25} color={recording ? C.danger : C.text} /><Text style={styles.barLabel}>{recording ? '停止' : '錄影'}</Text></Pressable>
-          <Pressable style={styles.play} onPress={() => setPlaying((value) => !value)}><Ionicons name={playing ? 'pause' : 'play'} size={28} color={C.bg} /></Pressable>
-          <Pressable style={styles.speedButton} onPress={openAbPanel}><Text style={styles.speedText}>{speed.toFixed(1)}x</Text></Pressable>
-          <Pressable style={styles.barButton} onPress={() => setPlayMode(playMode === 'ab-loop' ? 'full-loop' : 'ab-loop')}><Ionicons name="repeat" size={22} color={playMode === 'full-loop' ? C.lime : C.text} /><Text style={styles.barLabel}>{playMode === 'ab-loop' ? '關閉 AB' : '循環'}</Text></Pressable>
-        </View>
+          <Pressable style={styles.play} onPress={togglePlayback} disabled={source?.type === 'youtube' && !youtubeReady}><Ionicons name={playing ? 'pause' : 'play'} size={28} color={C.bg} /></Pressable>
+          <Pressable style={styles.speedButton} onPress={openAbPanel}><Text style={styles.speedText}>{speedLabel(speed)}</Text></Pressable>
+          <Pressable style={styles.barButton} onPress={() => { keepYoutubeControlsVisible(true); setPlayMode(playMode === 'ab-loop' ? 'full-loop' : 'ab-loop'); }}><Ionicons name="repeat" size={22} color={playMode === 'full-loop' ? C.lime : C.text} /><Text style={styles.barLabel}>{playMode === 'ab-loop' ? '關閉 AB' : '循環'}</Text></Pressable>
+        </View>}
 
         {panelOpen && <Pressable style={styles.dismissArea} onPress={() => setPanelOpen(false)} />}
         {panelOpen && <View style={styles.floatingPanel} {...panelPan.panHandlers}>
@@ -400,16 +607,16 @@ export default function PracticeScreen({ route, navigation }) {
               <Pressable onPress={() => applyAbPoint('a', position)} style={[styles.abPoint, abEditTarget === 'a' && styles.abPointActive]}><Text style={styles.abName}>A 起點</Text><Text style={styles.abValue}>{draftA == null ? '設定目前位置' : abTime(draftA)}</Text><Text style={styles.abHint}>點擊設為目前位置</Text></Pressable>
               <Pressable onPress={() => applyAbPoint('b', position)} style={[styles.abPoint, abEditTarget === 'b' && styles.abPointActive]}><Text style={styles.abName}>B 終點</Text><Text style={styles.abValue}>{draftB == null ? '設定目前位置' : abTime(draftB)}</Text><Text style={styles.abHint}>點擊設為目前位置</Text></Pressable>
             </View>
-            <ABTimeline min={trimStart} max={timelineMaximum} a={draftA} b={draftB} onAChange={(value) => applyAbPoint('a', value)} onBChange={(value) => applyAbPoint('b', value)} />
+            <ABTimeline min={trimStart} max={timelineMaximum} a={draftA} b={draftB} frames={abFrames} onAChange={(value) => applyAbPoint('a', value)} onBChange={(value) => applyAbPoint('b', value)} />
             <View style={styles.abQuickActions}><Text style={styles.abInstruction}>{draftA != null && draftB != null ? 'AB 已啟用，可繼續拖曳微調' : `下一步：設定 ${abEditTarget.toUpperCase()} 點`}</Text><Pressable style={styles.abReset} onPress={resetAB}><Ionicons name="refresh" size={15} color={C.muted} /><Text style={styles.abResetText}>重設 AB</Text></Pressable></View>
           </View>
-          <View style={styles.panelFooter}><Pressable style={styles.panelAction} onPress={() => setPlayMode(playMode === 'ab-loop' ? 'full-loop' : 'ab-loop')}><Ionicons name="repeat" size={25} color={playMode === 'ab-loop' ? C.lime : C.muted} /><Text style={styles.panelActionText}>{playMode === 'ab-loop' ? '關閉 AB' : 'AB 模式'}</Text></Pressable><Pressable style={styles.panelAction} onPress={() => setSettingsOpen(true)}><Ionicons name="cube-outline" size={25} color={C.muted} /><Text style={styles.panelActionText}>剪輯長度</Text></Pressable><Pressable style={styles.panelPlay} onPress={() => setPlaying((value) => !value)}><Ionicons name={playing ? 'pause' : 'play'} size={27} color={C.bg} /></Pressable><Pressable style={styles.speedStep} onPress={() => adjustSpeed(-1)}><Ionicons name="chevron-back" size={27} color={C.text} /></Pressable><View style={styles.speedBox}><Text style={styles.speedBig}>{speed.toFixed(1)}x</Text></View><Pressable style={styles.speedStep} onPress={() => adjustSpeed(1)}><Ionicons name="chevron-forward" size={27} color={C.text} /></Pressable></View>
+          <View style={styles.panelFooter}><Pressable style={styles.panelAction} onPress={() => setPlayMode(playMode === 'ab-loop' ? 'full-loop' : 'ab-loop')}><Ionicons name="repeat" size={25} color={playMode === 'ab-loop' ? C.lime : C.muted} /><Text style={styles.panelActionText}>{playMode === 'ab-loop' ? '關閉 AB' : 'AB 模式'}</Text></Pressable><Pressable style={styles.panelAction} onPress={() => setSettingsOpen(true)}><Ionicons name="cube-outline" size={25} color={C.muted} /><Text style={styles.panelActionText}>剪輯長度</Text></Pressable><Pressable style={styles.panelPlay} onPress={togglePlayback} disabled={source?.type === 'youtube' && !youtubeReady}><Ionicons name={playing ? 'pause' : 'play'} size={27} color={C.bg} /></Pressable><Pressable style={styles.speedStep} onPress={() => adjustSpeed(-1)}><Ionicons name="chevron-back" size={27} color={C.text} /></Pressable><View style={styles.speedBox}><Text style={styles.speedBig}>{speedLabel(speed)}</Text></View><Pressable style={styles.speedStep} onPress={() => adjustSpeed(1)}><Ionicons name="chevron-forward" size={27} color={C.text} /></Pressable></View>
         </View>}
       </View>
 
-      {!fullscreen && <View style={styles.hintCard}><Text style={styles.hintTitle}>練舞專案已自動保存</Text><Text style={styles.hintText}>AB 書籤、倍速、播放位置與畫面設定會保留到下次練習。</Text></View>}
+      {!fullscreen && !isYoutube && <View style={styles.hintCard}><Text style={styles.hintTitle}>練舞專案已自動保存</Text><Text style={styles.hintText}>AB 書籤、倍速、播放位置與畫面設定會保留到下次練習。</Text></View>}
 
-      <SettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} project={project} playMode={playMode} setPlayMode={setPlayMode} position={position} total={total} cameraMode={cameraMode} setCameraMode={(value) => { setCameraMode(value); updateProject(project.id, { cameraMode: value }); }} update={(patch) => updateProject(project.id, patch)} />
+      <SettingsModal visible={settingsOpen} onClose={() => { setSettingsOpen(false); keepYoutubeControlsVisible(true); }} project={project} playMode={playMode} setPlayMode={setPlayMode} position={position} total={total} cameraMode={cameraMode} setCameraMode={(value) => { setCameraMode(value); updateProject(project.id, { cameraMode: value }); }} update={(patch) => updateProject(project.id, patch)} />
     </View>
   );
 }
@@ -425,17 +632,20 @@ function SettingsModal({ visible, onClose, project, playMode, setPlayMode, posit
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: C.bg }, fullscreen: { backgroundColor: '#000' }, header: { height: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 12 }, iconButton: { width: 44, height: 44, borderRadius: 15, backgroundColor: C.panel, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#292929' }, headerTitle: { flex: 1, color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 17 }, stage: { marginHorizontal: 12, overflow: 'hidden', backgroundColor: '#050505', borderWidth: 1, borderColor: '#292929' }, fill: { width: '100%', height: '100%' }, videoLayer: { flex: 1 }, sideTools: { position: 'absolute', right: 12, top: 13, gap: 9 }, roundTool: { width: 46, height: 46, borderRadius: 23, backgroundColor: 'rgba(20,20,20,.84)', borderWidth: 1, borderColor: '#434343', alignItems: 'center', justifyContent: 'center' }, activeTool: { backgroundColor: C.lime, borderColor: C.lime }, camera: { position: 'absolute', overflow: 'hidden', borderWidth: 2, borderColor: C.lime, backgroundColor: '#111' }, cameraPip: { width: 118, height: 172, left: 13, bottom: 126, borderRadius: 19 }, cameraOverlay: { left: 0, top: 0, right: 0, bottom: 112, opacity: 0.46, borderWidth: 0 }, cameraSplit: { width: '50%', top: 0, right: 0, bottom: 112, borderRadius: 0 }, liveBadge: { position: 'absolute', left: 8, top: 8, borderRadius: 8, backgroundColor: C.lime, paddingHorizontal: 7, paddingVertical: 4 }, liveText: { color: C.bg, fontFamily: 'JetBrainsMono', fontSize: 9 }, countdown: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,.55)', alignItems: 'center', justifyContent: 'center' }, countdownText: { color: C.lime, fontFamily: 'JetBrainsMono', fontSize: 84 }, timeline: { position: 'absolute', left: 14, right: 14, bottom: 86, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6 }, slider: { flex: 1, height: 36 }, clock: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 10 }, bottomBar: { position: 'absolute', left: 9, right: 9, bottom: 9, height: 72, borderRadius: 22, backgroundColor: 'rgba(25,25,25,.94)', borderWidth: 1, borderColor: '#414141', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 5 }, barButton: { width: 52, minHeight: 52, alignItems: 'center', justifyContent: 'center', gap: 3 }, barLabel: { color: C.muted, fontSize: 9 }, play: { width: 54, height: 54, borderRadius: 27, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }, speedButton: { minWidth: 58, height: 48, borderRadius: 15, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, speedText: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 15 }, dismissArea: { ...StyleSheet.absoluteFillObject, bottom: '51%' }, floatingPanel: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '53%', minHeight: 350, backgroundColor: '#1B1B1B', borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderColor: '#3A3A3A', paddingTop: 14 }, panelHeader: { height: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 }, panelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 9 }, panelTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 18 }, fold: { marginLeft: 'auto', width: 42, height: 42, borderRadius: 21, backgroundColor: '#303030', alignItems: 'center', justifyContent: 'center' }, foldLabel: { color: C.muted, marginLeft: 8 }, bookmarkList: { paddingHorizontal: 14, gap: 10, paddingVertical: 8 }, bookmark: { width: 122, height: 106, borderRadius: 16, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: '#303030', padding: 9 }, bookmarkActive: { backgroundColor: C.lime, borderColor: C.lime }, bookmarkNumber: { color: C.muted, fontFamily: 'JetBrainsMono', fontSize: 10 }, bookmarkThumb: { flex: 1, alignItems: 'center', justifyContent: 'center' }, bookmarkTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 10 }, bookmarkTime: { color: C.muted, fontFamily: 'JetBrainsMono', fontSize: 8, marginTop: 2 }, addBookmark: { width: 105, height: 106, borderRadius: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: '#4A4A4A', alignItems: 'center', justifyContent: 'center' }, addBookmarkText: { color: C.muted, fontSize: 10, marginTop: 4 }, abEditor: { paddingHorizontal: 18, paddingTop: 3 }, abLabels: { flexDirection: 'row', gap: 10 }, abPoint: { flex: 1, borderRadius: 12, backgroundColor: '#262626', padding: 9 }, abName: { color: C.muted, fontSize: 9 }, abValue: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 11, marginTop: 2 }, panelFooter: { minHeight: 82, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 10, borderTopWidth: 1, borderColor: '#2D2D2D' }, panelAction: { minWidth: 58, alignItems: 'center', gap: 4 }, panelActionText: { color: C.muted, fontSize: 9 }, panelPlay: { width: 54, height: 54, borderRadius: 27, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }, speedStep: { width: 42, height: 50, alignItems: 'center', justifyContent: 'center' }, speedBox: { minWidth: 66, height: 54, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, speedBig: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 17 }, hintCard: { margin: 16, padding: 16, borderRadius: 20, backgroundColor: C.panel, borderWidth: 1, borderColor: '#282828' }, hintTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 13 }, hintText: { color: C.muted, fontSize: 11, lineHeight: 17, marginTop: 5 }, modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,.72)', justifyContent: 'flex-end' }, settingsSheet: { maxHeight: '88%', backgroundColor: '#181818', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 34, borderWidth: 1, borderColor: '#363636' }, settingsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }, settingsTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 21 }, close: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, groupTitle: { color: C.lime, fontFamily: 'ZenGothic-Bold', fontSize: 11, letterSpacing: 1, marginTop: 19, marginBottom: 6 }, choice: { minHeight: 55, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderColor: '#2C2C2C' }, choiceLabel: { color: C.text, fontSize: 14 }, choiceValue: { color: C.muted, fontSize: 10, marginTop: 2 }, trimRow: { flexDirection: 'row', gap: 10 }, trimButton: { flex: 1, borderRadius: 15, backgroundColor: '#242424', padding: 13 }, trimLabel: { color: C.muted, fontSize: 10 }, trimValue: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 16, marginTop: 4 }, pills: { flexDirection: 'row', gap: 9 }, settingPill: { flex: 1, minHeight: 46, borderRadius: 14, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, settingPillActive: { backgroundColor: C.lime }, settingPillText: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 12 },
+  screen: { flex: 1, backgroundColor: C.bg }, fullscreen: { backgroundColor: '#000' }, header: { height: 62, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 12 }, iconButton: { width: 44, height: 44, borderRadius: 15, backgroundColor: C.panel, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#292929' }, headerTitle: { flex: 1, color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 17 }, stage: { marginHorizontal: 12, overflow: 'hidden', backgroundColor: '#050505', borderWidth: 1, borderColor: '#292929' }, youtubeStage: { flex: 1 }, stageFullscreen: { marginHorizontal: 0 }, fill: { width: '100%', height: '100%' }, videoLayer: { flex: 1 }, youtubeVideoLayer: { position: 'absolute', left: 0, right: 0, top: 0, alignItems: 'center', justifyContent: 'center' }, youtubeTapTarget: { position: 'absolute', left: 0, right: 0, top: 0, zIndex: 2 }, sideTools: { position: 'absolute', right: 12, top: 13, gap: 9, zIndex: 8 }, roundTool: { width: 46, height: 46, borderRadius: 23, backgroundColor: 'rgba(20,20,20,.84)', borderWidth: 1, borderColor: '#434343', alignItems: 'center', justifyContent: 'center' }, activeTool: { backgroundColor: C.lime, borderColor: C.lime }, camera: { position: 'absolute', overflow: 'hidden', borderWidth: 2, borderColor: C.lime, backgroundColor: '#111', zIndex: 4 }, cameraPip: { width: 118, height: 172, left: 13, bottom: 126, borderRadius: 19 }, cameraOverlay: { left: 0, top: 0, right: 0, bottom: 112, opacity: 0.46, borderWidth: 0 }, cameraSplit: { width: '50%', top: 0, right: 0, bottom: 112, borderRadius: 0 }, liveBadge: { position: 'absolute', left: 8, top: 8, borderRadius: 8, backgroundColor: C.lime, paddingHorizontal: 7, paddingVertical: 4 }, liveText: { color: C.bg, fontFamily: 'JetBrainsMono', fontSize: 9 }, countdown: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,.55)', alignItems: 'center', justifyContent: 'center', zIndex: 12 }, countdownText: { color: C.lime, fontFamily: 'JetBrainsMono', fontSize: 84 }, timeline: { position: 'absolute', left: 14, right: 14, bottom: 86, height: 38, flexDirection: 'row', alignItems: 'center', gap: 6, zIndex: 8 }, slider: { flex: 1, height: 36 }, clock: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 10 }, bottomBar: { position: 'absolute', left: 9, right: 9, bottom: 9, height: 72, borderRadius: 22, backgroundColor: 'rgba(25,25,25,.94)', borderWidth: 1, borderColor: '#414141', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 5, zIndex: 8 }, barButton: { width: 52, minHeight: 52, alignItems: 'center', justifyContent: 'center', gap: 3 }, barLabel: { color: C.muted, fontSize: 9 }, play: { width: 54, height: 54, borderRadius: 27, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }, speedButton: { minWidth: 58, height: 48, borderRadius: 15, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, speedText: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 15 }, dismissArea: { ...StyleSheet.absoluteFillObject, bottom: '51%', zIndex: 15 }, floatingPanel: { position: 'absolute', left: 0, right: 0, bottom: 0, height: '53%', minHeight: 350, backgroundColor: '#1B1B1B', borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderColor: '#3A3A3A', paddingTop: 14, zIndex: 16 }, panelHeader: { height: 58, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 }, panelTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 9 }, panelTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 18 }, fold: { marginLeft: 'auto', width: 42, height: 42, borderRadius: 21, backgroundColor: '#303030', alignItems: 'center', justifyContent: 'center' }, foldLabel: { color: C.muted, marginLeft: 8 }, bookmarkList: { paddingHorizontal: 14, gap: 10, paddingVertical: 8 }, bookmark: { width: 122, height: 106, borderRadius: 16, backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: '#303030', padding: 9 }, bookmarkActive: { backgroundColor: C.lime, borderColor: C.lime }, bookmarkNumber: { color: C.muted, fontFamily: 'JetBrainsMono', fontSize: 10 }, bookmarkThumb: { flex: 1, alignItems: 'center', justifyContent: 'center' }, bookmarkTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 10 }, bookmarkTime: { color: C.muted, fontFamily: 'JetBrainsMono', fontSize: 8, marginTop: 2 }, addBookmark: { width: 105, height: 106, borderRadius: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: '#4A4A4A', alignItems: 'center', justifyContent: 'center' }, addBookmarkText: { color: C.muted, fontSize: 10, marginTop: 4 }, abEditor: { paddingHorizontal: 18, paddingTop: 3 }, abLabels: { flexDirection: 'row', gap: 10 }, abPoint: { flex: 1, borderRadius: 12, backgroundColor: '#262626', padding: 9 }, abName: { color: C.muted, fontSize: 9 }, abValue: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 11, marginTop: 2 }, panelFooter: { minHeight: 82, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingHorizontal: 10, borderTopWidth: 1, borderColor: '#2D2D2D' }, panelAction: { minWidth: 58, alignItems: 'center', gap: 4 }, panelActionText: { color: C.muted, fontSize: 9 }, panelPlay: { width: 54, height: 54, borderRadius: 27, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }, speedStep: { width: 42, height: 50, alignItems: 'center', justifyContent: 'center' }, speedBox: { minWidth: 66, height: 54, borderRadius: 16, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, speedBig: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 17 }, hintCard: { margin: 16, padding: 16, borderRadius: 20, backgroundColor: C.panel, borderWidth: 1, borderColor: '#282828' }, hintTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 13 }, hintText: { color: C.muted, fontSize: 11, lineHeight: 17, marginTop: 5 }, modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,.72)', justifyContent: 'flex-end' }, settingsSheet: { maxHeight: '88%', backgroundColor: '#181818', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 34, borderWidth: 1, borderColor: '#363636' }, settingsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }, settingsTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 21 }, close: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, groupTitle: { color: C.lime, fontFamily: 'ZenGothic-Bold', fontSize: 11, letterSpacing: 1, marginTop: 19, marginBottom: 6 }, choice: { minHeight: 55, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderColor: '#2C2C2C' }, choiceLabel: { color: C.text, fontSize: 14 }, choiceValue: { color: C.muted, fontSize: 10, marginTop: 2 }, trimRow: { flexDirection: 'row', gap: 10 }, trimButton: { flex: 1, borderRadius: 15, backgroundColor: '#242424', padding: 13 }, trimLabel: { color: C.muted, fontSize: 10 }, trimValue: { color: C.text, fontFamily: 'JetBrainsMono', fontSize: 16, marginTop: 4 }, pills: { flexDirection: 'row', gap: 9 }, settingPill: { flex: 1, minHeight: 46, borderRadius: 14, backgroundColor: '#292929', alignItems: 'center', justifyContent: 'center' }, settingPillActive: { backgroundColor: C.lime }, settingPillText: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 12 },
 });
 
 Object.assign(styles, {
   abPointActive: { borderWidth: 1, borderColor: C.lime },
   abHint: { color: C.muted, fontSize: 8, marginTop: 4 },
-  abTimeline: { height: 45, marginTop: 7, justifyContent: 'center' },
+  abTimeline: { height: 86, marginTop: 9, justifyContent: 'center' },
   abTimelineTouch: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
-  abTrack: { position: 'absolute', left: 0, right: 0, top: 21, height: 6, borderRadius: 3, backgroundColor: '#454545' },
-  abRange: { position: 'absolute', top: 21, height: 6, borderRadius: 3, backgroundColor: C.lime },
-  abHandle: { position: 'absolute', top: 8, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', zIndex: 3, borderWidth: 2 },
+  abFilmstrip: { position: 'absolute', left: 0, right: 0, top: 15, height: 56, flexDirection: 'row', overflow: 'hidden', borderRadius: 9, backgroundColor: '#292929', borderWidth: 1, borderColor: '#494949' },
+  abFrame: { flex: 1, height: '100%', minWidth: 1, opacity: 0.86 },
+  abFramePlaceholder: { backgroundColor: '#3A3A3A', borderRightWidth: 1, borderRightColor: '#505050' },
+  abTrack: { position: 'absolute', left: 0, right: 0, top: 15, height: 56, borderRadius: 9, backgroundColor: 'transparent', borderWidth: 2, borderColor: '#FFFFFF' },
+  abRange: { position: 'absolute', top: 15, height: 56, borderRadius: 8, backgroundColor: 'rgba(200,255,53,.28)', borderWidth: 3, borderColor: C.lime },
+  abHandle: { position: 'absolute', top: 7, width: 32, height: 72, borderRadius: 9, alignItems: 'center', justifyContent: 'center', zIndex: 3, borderWidth: 2, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
   abHandleA: { backgroundColor: C.lime, borderColor: C.lime },
   abHandleB: { backgroundColor: C.text, borderColor: C.text },
   abHandleUnset: { opacity: 0.65 },
