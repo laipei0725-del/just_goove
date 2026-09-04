@@ -27,6 +27,17 @@ const time = (value) => { const safe = Number.isFinite(value) ? Math.max(0, Math
 const abTime = (value) => { const safe = Math.max(0, tenth(value)); return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, '0')}.${Math.round((safe % 1) * 10)}`; };
 const nearestYoutubeRate = (requested, rates = YT_RATES) => rates.reduce((nearest, value) => Math.abs(value - requested) < Math.abs(nearest - requested) ? value : nearest, rates[0]);
 const speedLabel = (value) => `${Number(finiteNumber(value, 1).toFixed(2))}x`;
+const promptText = (title, message, placeholder) => new Promise((resolve) => {
+  if (Platform.OS === 'web') {
+    if (typeof window !== 'undefined' && typeof window.prompt === 'function') {
+      resolve(window.prompt(`${title}${message ? `\n${message}` : ''}`, placeholder));
+    } else {
+      resolve(null);
+    }
+    return;
+  }
+  Alert.prompt(title, message || '', (value) => resolve(value), 'plain-text', placeholder);
+});
 let mediaLibraryPromise;
 const loadMediaLibrary = () => {
   if (Platform.OS === 'web') return Promise.resolve(null);
@@ -46,34 +57,104 @@ function ABTimeline({ min, max, a, b, frames = [], onAChange, onBChange }) {
   const visualB = b == null ? max : b;
   const xFor = useCallback((value) => ((Math.max(min, Math.min(value, max)) - min) / range) * width, [min, max, range, width]);
   const valueFor = useCallback((x) => tenth(min + (Math.max(0, Math.min(x, width)) / Math.max(1, width)) * range), [min, range, width]);
-  const createHandle = (value, onChange) => useMemo(() => {
-    const startX = { current: 0 };
-    return PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => { startX.current = xFor(value); },
-      onPanResponderMove: (_, gesture) => onChange(valueFor(startX.current + gesture.dx)),
-    });
-  }, [onChange, value, valueFor, xFor]);
-  const aResponder = createHandle(visualA, onAChange);
-  const bResponder = createHandle(visualB, onBChange);
+  const dragBaseRef = useRef(null);
+  // --- Web: react-native-web's PanResponder does not reliably track a mouse
+  // drag, so on web the handles use native DOM Pointer Events with pointer
+  // capture. The drag baseline is captured once when the gesture starts so
+  // re-renders mid-drag never shift the value. Native keeps the PanResponder
+  // path below. A/B ordering is enforced by applyAbPoint.
+  const readClientX = (event) => {
+    const native = event?.nativeEvent || {};
+    return Number.isFinite(native.clientX) ? native.clientX : native.pageX;
+  };
+  const handlePointerDown = (target, event) => {
+    const clientX = readClientX(event);
+    if (!Number.isFinite(clientX)) return;
+    dragBaseRef.current = {
+      target,
+      base: target === 'a' ? a : b,
+      startX: clientX,
+      trackWidth: widthRef.current || width,
+    };
+    try { event.currentTarget.setPointerCapture?.(event.nativeEvent.pointerId); } catch {}
+  };
+  const handlePointerMove = (event) => {
+    const drag = dragBaseRef.current;
+    if (!drag) return;
+    const clientX = readClientX(event);
+    if (!Number.isFinite(clientX)) return;
+    const baseValue = drag.base == null ? (drag.target === 'a' ? min : max) : drag.base;
+    const delta = ((clientX - drag.startX) * range) / Math.max(1, drag.trackWidth);
+    const next = tenth(Math.max(min, Math.min(baseValue + delta, max)));
+    if (drag.target === 'a') onAChange(next);
+    else onBChange(next);
+  };
+  const handlePointerEnd = (event) => {
+    try { event.currentTarget.releasePointerCapture?.(event.nativeEvent.pointerId); } catch {}
+    dragBaseRef.current = null;
+  };
+  const handleTimelinePointerDown = (event) => {
+    // Only handle taps that did not start on a drag handle.
+    if (dragBaseRef.current) return;
+    const clientX = readClientX(event);
+    if (!Number.isFinite(clientX) || typeof event?.currentTarget?.getBoundingClientRect !== 'function') return;
+    const value = valueFor(clientX - event.currentTarget.getBoundingClientRect().left);
+    if (Math.abs(value - visualA) <= Math.abs(value - visualB)) onAChange(value);
+    else onBChange(value);
+  };
+  const handleNativeTap = (event) => {
+    const value = event?.nativeEvent?.locationX;
+    if (!Number.isFinite(value)) return;
+    const next = valueFor(value);
+    if (Math.abs(next - visualA) <= Math.abs(next - visualB)) onAChange(next);
+    else onBChange(next);
+  };
+  const buildNativeResponder = (target) => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderGrant: () => {
+      dragBaseRef.current = { target, base: target === 'a' ? a : b };
+    },
+    onPanResponderMove: (_, gesture) => {
+      const base = dragBaseRef.current?.target === target ? dragBaseRef.current.base : (target === 'a' ? a : b);
+      const baseValue = base == null ? (target === 'a' ? min : max) : base;
+      const delta = (gesture.dx * range) / Math.max(1, widthRef.current || width);
+      const next = tenth(Math.max(min, Math.min(baseValue + delta, max)));
+      if (target === 'a') onAChange(next);
+      else onBChange(next);
+    },
+    onPanResponderRelease: () => { dragBaseRef.current = null; },
+    onPanResponderTerminate: () => { dragBaseRef.current = null; },
+  });
+  const aResponder = buildNativeResponder('a');
+  const bResponder = buildNativeResponder('b');
+  const handlePropsFor = (target) => (Platform.OS === 'web'
+    ? {
+      onPointerDown: (event) => handlePointerDown(target, event),
+      onPointerMove: handlePointerMove,
+      onPointerUp: handlePointerEnd,
+      onPointerCancel: handlePointerEnd,
+    }
+    : (target === 'a' ? aResponder : bResponder).panHandlers);
   const aX = xFor(visualA);
   const bX = xFor(visualB);
   const rangeLeft = Math.min(aX, bX);
   const rangeWidth = Math.abs(bX - aX);
-  return <View style={styles.abTimeline} onLayout={(event) => { const next = event.nativeEvent.layout.width; widthRef.current = next; setWidth(next); }} accessibilityLabel="AB 影片影格時間軸">
-    <Pressable style={styles.abTimelineTouch} onPress={(event) => {
-      const value = valueFor(event.nativeEvent.locationX);
-      if (Math.abs(value - visualA) <= Math.abs(value - visualB)) onAChange(value);
-      else onBChange(value);
-    }} />
+  return <View
+    style={styles.abTimeline}
+    onLayout={(event) => { const next = event.nativeEvent.layout.width; widthRef.current = next; setWidth(next); }}
+    accessibilityLabel="AB 影片影格時間軸"
+    {...(Platform.OS === 'web' ? { onPointerDown: handleTimelinePointerDown } : {})}
+  >
+    <Pressable style={[styles.abTimelineTouch, Platform.OS === 'web' && styles.abTimelineTouchWeb]} {...(Platform.OS === 'web' ? {} : { onPress: handleNativeTap })} />
     <View style={styles.abFilmstrip} pointerEvents="none">
       {frames.length ? frames.map((frame, index) => <Image key={`${index}-${frame?.uri || frame}`} source={frame} style={styles.abFrame} contentFit="cover" />) : Array.from({ length: 12 }, (_, index) => <View key={index} style={[styles.abFrame, styles.abFramePlaceholder]} />)}
     </View>
     <View style={styles.abTrack} pointerEvents="none" />
     {a != null && b != null && <View pointerEvents="none" style={[styles.abRange, { left: rangeLeft, width: rangeWidth }]} />}
-    <View {...aResponder.panHandlers} style={[styles.abHandle, styles.abHandleA, a == null && styles.abHandleUnset, { left: aX - 16 }]}><Text style={styles.abHandleText}>A</Text></View>
-    <View {...bResponder.panHandlers} style={[styles.abHandle, styles.abHandleB, b == null && styles.abHandleUnset, { left: bX - 16 }]}><Text style={styles.abHandleText}>B</Text></View>
+    <View {...handlePropsFor('a')} style={[styles.abHandle, styles.abHandleA, a == null && styles.abHandleUnset, { left: aX - 16 }]}><Text style={styles.abHandleText}>A</Text></View>
+    <View {...handlePropsFor('b')} style={[styles.abHandle, styles.abHandleB, b == null && styles.abHandleUnset, { left: bX - 16 }]}><Text style={styles.abHandleText}>B</Text></View>
   </View>;
 }
 
@@ -82,7 +163,7 @@ function ChoiceRow({ label, value, selected, onPress }) {
 }
 
 export default function PracticeScreen({ route, navigation }) {
-  useKeepAwake('just-groove-practice');
+  useKeepAwake('just-groove-practice', { suppressDeactivateWarnings: Platform.OS === 'web' });
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { projects, updateProject } = useProjects();
@@ -90,6 +171,8 @@ export default function PracticeScreen({ route, navigation }) {
   const cameraRef = useRef(null);
   const videoRef = useRef(null);
   const ytRef = useRef(null);
+  const autoplayDoneRef = useRef(false);
+  const autoplayFallbackTimerRef = useRef(null);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [microphonePermission, requestMicrophonePermission] = useMicrophonePermissions();
   const [mediaPermission, setMediaPermission] = useState(null);
@@ -111,6 +194,7 @@ export default function PracticeScreen({ route, navigation }) {
   const [playMode, setPlayModeState] = useState(project?.playMode || 'full-loop');
   const [ytPosition, setYtPosition] = useState(finiteNumber(project?.position));
   const [ytDuration, setYtDuration] = useState(0);
+  const [localDuration, setLocalDuration] = useState(0);
   const [mirrored, setMirrored] = useState(false);
   const [videoZoom, setVideoZoom] = useState(1);
   const videoZoomRef = useRef(1);
@@ -149,12 +233,26 @@ export default function PracticeScreen({ route, navigation }) {
   });
   const { currentTime = 0 } = useEvent(player, 'timeUpdate', { currentTime: 0, currentLiveTimestamp: null, currentOffsetFromLive: null, bufferedPosition: 0 });
   const { duration = 0 } = useEvent(player, 'sourceLoad', { duration: 0, availableVideoTracks: [], availableAudioTracks: [], availableSubtitleTracks: [] });
+  const { status: playerStatus } = useEvent(player, 'statusChange', { status: player.status });
+  // expo-video does not emit sourceLoad on web, so `duration` never updates
+  // there. Poll the underlying player on web to keep the timeline/scrubber
+  // (and AB loop bounds) in sync with the real clip length.
+  useEffect(() => {
+    if (source?.type !== 'local' || Platform.OS !== 'web') return undefined;
+    const readDuration = () => {
+      const value = player.duration;
+      if (Number.isFinite(value) && value > 0) setLocalDuration(value);
+    };
+    readDuration();
+    const timer = setInterval(readDuration, 400);
+    return () => clearInterval(timer);
+  }, [player, source?.type]);
   const activeBookmark = project?.bookmarks?.find((item) => item.id === activeBookmarkId) || null;
   // expo-video can briefly report NaN while restoring/loading a media source.
   // UIKit's native slider throws an uncaught exception when given NaN, so every
   // value crossing the JS/native boundary must be finite and internally ordered.
   const position = Math.max(0, finiteNumber(source?.type === 'youtube' ? ytPosition : currentTime));
-  const total = Math.max(0, finiteNumber(source?.type === 'youtube' ? ytDuration : duration));
+  const total = Math.max(0, finiteNumber(source?.type === 'youtube' ? ytDuration : Math.max(duration, localDuration)));
   const trimStart = Math.max(0, finiteNumber(project?.trimStart));
   const storedTrimEnd = finiteNumber(project?.trimEnd, 0);
   const timelineMaximum = Math.max(trimStart, storedTrimEnd > trimStart ? storedTrimEnd : total, 1);
@@ -243,6 +341,8 @@ export default function PracticeScreen({ route, navigation }) {
       if (source.coverUri) setAbFrames(timestamps.map(() => source.coverUri));
       return undefined;
     }
+    // expo-video cannot extract video frames on web yet.
+    if (Platform.OS === 'web') return undefined;
     player.generateThumbnailsAsync(timestamps, { maxWidth: 160, maxHeight: 100 }).then((images) => {
       if (active && images?.length) setAbFrames(images);
     }).catch(() => {});
@@ -269,9 +369,46 @@ export default function PracticeScreen({ route, navigation }) {
     if (!project) navigation.goBack();
   }, [project, navigation]);
 
+  // Attempt autoplay once the local source is ready. Web browsers only allow
+  // autoplay with sound after the user has interacted with the page, so on web
+  // we skip the attempt when there was no prior gesture. That avoids an
+  // unhandled HTMLMediaElement play() rejection and leaves the video paused
+  // for the user to start with the play button.
+  useEffect(() => {
+    if (autoplayDoneRef.current) return;
+    const canAutoplay = Platform.OS !== 'web'
+      || typeof navigator === 'undefined'
+      || !navigator.userActivation
+      || navigator.userActivation.hasBeenActive;
+    if (!canAutoplay) return;
+    if (source?.type === 'local' && playerStatus === 'readyToPlay') {
+      autoplayDoneRef.current = true;
+      setPlaying(true);
+      if (Platform.OS === 'web') {
+        autoplayFallbackTimerRef.current = setTimeout(() => {
+          if (!player.playing) setPlaying(false);
+        }, 700);
+      }
+    } else if (source?.type === 'youtube' && youtubeReady) {
+      autoplayDoneRef.current = true;
+      setPlaying(true);
+    }
+    if (source?.type === 'local' && playerStatus === 'error') {
+      setPlaying(false);
+    }
+  }, [player, playerStatus, source?.type, youtubeReady]);
+
+  useEffect(() => () => {
+    if (autoplayFallbackTimerRef.current) clearTimeout(autoplayFallbackTimerRef.current);
+  }, []);
+
   useEffect(() => {
     player.playbackRate = speed;
-    if (source?.type === 'local') playing ? player.play() : player.pause();
+    if (source?.type !== 'local') return;
+    try {
+      if (playing) player.play();
+      else player.pause();
+    } catch {}
   }, [player, playing, source?.type, speed]);
 
   const togglePlayback = useCallback(() => {
@@ -304,16 +441,6 @@ export default function PracticeScreen({ route, navigation }) {
   }, [playing, source?.type]);
 
   useEffect(() => {
-    if (!activeAbRange || playMode !== 'ab-loop' || position < activeAbRange.end) return;
-    seek(activeAbRange.start);
-  }, [position, activeAbRange, playMode]);
-
-  useEffect(() => {
-    if (playMode !== 'full-loop' || !total || position < total - 0.2) return;
-    seek(project.trimStart || 0);
-  }, [position, total, playMode, project?.trimStart]);
-
-  useEffect(() => {
     if (!recording) return undefined;
     const timer = setInterval(() => setRecordSeconds((value) => value + 1), 1000);
     return () => clearInterval(timer);
@@ -332,11 +459,46 @@ export default function PracticeScreen({ route, navigation }) {
     else player.currentTime = bounded;
   }, [player, source?.type, timelineMaximum, trimStart]);
 
+  // When a local clip plays to its natural end, restart it from trimStart so
+  // full-loop keeps running. Reading latest values through a ref keeps this
+  // native event listener from capturing stale state.
+  const loopStateRef = useRef({ playMode, trimStart, sourceType: source?.type });
+  loopStateRef.current = { playMode, trimStart, sourceType: source?.type };
+  useEffect(() => {
+    const subscription = player.addListener('playToEnd', () => {
+      const { playMode: mode, trimStart: start, sourceType } = loopStateRef.current;
+      if (sourceType !== 'local' || mode !== 'full-loop') return;
+      player.currentTime = start;
+      player.play();
+      setPlaying(true);
+    });
+    return () => subscription.remove();
+  }, [player]);
+
+  useEffect(() => {
+    if (!playing) return;
+    if (!activeAbRange || playMode !== 'ab-loop' || position < activeAbRange.end) return;
+    seek(activeAbRange.start);
+    if (source?.type === 'local' && !player.playing) player.play();
+  }, [playing, position, activeAbRange, playMode, seek, player, source?.type]);
+
+  useEffect(() => {
+    if (playMode !== 'full-loop' || !total || position < total - 0.2) return;
+    seek(project.trimStart || 0);
+    setPlaying(true);
+  }, [position, total, playMode, project?.trimStart, seek]);
+
   const applyAbPoint = useCallback((target, rawValue) => {
     const value = tenth(Math.max(trimStart, Math.min(finiteNumber(rawValue), timelineMaximum)));
-    let nextA = target === 'a' ? value : draftA;
-    let nextB = target === 'b' ? value : draftB;
-    if (nextA != null && nextB != null && nextA > nextB) [nextA, nextB] = [nextB, nextA];
+    let nextA = draftA;
+    let nextB = draftB;
+    if (target === 'a') nextA = value;
+    else nextB = value;
+    // Keep A strictly before B so the two handles can never cross or overlap.
+    if (nextA != null && nextB != null && nextA >= nextB) {
+      if (target === 'a') nextA = tenth(Math.max(trimStart, nextB - 0.1));
+      else nextB = tenth(Math.min(timelineMaximum, nextA + 0.1));
+    }
     setDraftA(nextA);
     setDraftB(nextB);
     setAbEditTarget(target === 'a' ? 'b' : 'a');
@@ -469,11 +631,18 @@ export default function PracticeScreen({ route, navigation }) {
     return recording ? stopRecording() : beginRecording();
   };
 
-  const addBookmark = () => {
-    if (draftA == null || draftB == null || draftB <= draftA) return Alert.alert('尚未完成 AB 範圍', '請先拖曳或設定 A、B 點，且 B 必須晚於 A。');
+  const addBookmark = async () => {
+    if (draftA == null || draftB == null || draftB <= draftA) {
+      Alert.alert('尚未完成 AB 範圍', '請先拖曳或設定 A、B 點，且 B 必須晚於 A。');
+      return;
+    }
     const nextIndex = (project.bookmarks?.length || 0) + 1;
-    const bookmark = { id: `${Date.now()}`, title: `段落 ${nextIndex}`, start: draftA, end: draftB, speed };
-    updateProject(project.id, { bookmarks: [...project.bookmarks, bookmark] });
+    const fallbackTitle = `段落 ${nextIndex}`;
+    const entered = await promptText('儲存為書籤', '會一起保存目前 A–B 區間；長按書籤可重新命名。', fallbackTitle);
+    if (entered == null) return;
+    const title = entered.trim() || fallbackTitle;
+    const bookmark = { id: `${Date.now()}`, title, start: draftA, end: draftB, speed };
+    updateProject(project.id, { bookmarks: [...(project.bookmarks || []), bookmark] });
     setPlayMode('ab-loop');
     setActiveBookmarkId(bookmark.id); setPlaying(true);
   };
@@ -482,7 +651,12 @@ export default function PracticeScreen({ route, navigation }) {
     setActiveBookmarkId(bookmark.id); setDraftA(tenth(bookmark.start)); setDraftB(tenth(bookmark.end)); setAbEditTarget('a'); setSpeed(bookmark.speed); setPlayMode('ab-loop'); seek(bookmark.start); setPlaying(true);
   };
 
-  const renameBookmark = (bookmark) => Alert.prompt('重新命名書籤', '', (title) => title?.trim() && updateProject(project.id, { bookmarks: project.bookmarks.map((item) => item.id === bookmark.id ? { ...item, title: title.trim() } : item) }), 'plain-text', bookmark.title);
+  const renameBookmark = async (bookmark) => {
+    const entered = await promptText('重新命名書籤', '', bookmark.title);
+    const title = entered?.trim();
+    if (!title || title === bookmark.title) return;
+    updateProject(project.id, { bookmarks: project.bookmarks.map((item) => item.id === bookmark.id ? { ...item, title } : item) });
+  };
   const moveBookmark = (bookmark, direction) => {
     const items = [...project.bookmarks]; const index = items.findIndex((item) => item.id === bookmark.id); const target = index + direction;
     if (target < 0 || target >= items.length) return; [items[index], items[target]] = [items[target], items[index]]; updateProject(project.id, { bookmarks: items });
@@ -638,14 +812,14 @@ const styles = StyleSheet.create({
 Object.assign(styles, {
   abPointActive: { borderWidth: 1, borderColor: C.lime },
   abHint: { color: C.muted, fontSize: 8, marginTop: 4 },
-  abTimeline: { height: 86, marginTop: 9, justifyContent: 'center' },
-  abTimelineTouch: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
+  abTimeline: { height: 86, marginTop: 9, justifyContent: 'center', touchAction: 'none' },
+  abTimelineTouch: { ...StyleSheet.absoluteFillObject, zIndex: 1, touchAction: 'none' },
   abFilmstrip: { position: 'absolute', left: 0, right: 0, top: 15, height: 56, flexDirection: 'row', overflow: 'hidden', borderRadius: 9, backgroundColor: '#292929', borderWidth: 1, borderColor: '#494949' },
   abFrame: { flex: 1, height: '100%', minWidth: 1, opacity: 0.86 },
   abFramePlaceholder: { backgroundColor: '#3A3A3A', borderRightWidth: 1, borderRightColor: '#505050' },
   abTrack: { position: 'absolute', left: 0, right: 0, top: 15, height: 56, borderRadius: 9, backgroundColor: 'transparent', borderWidth: 2, borderColor: '#FFFFFF' },
   abRange: { position: 'absolute', top: 15, height: 56, borderRadius: 8, backgroundColor: 'rgba(200,255,53,.28)', borderWidth: 3, borderColor: C.lime },
-  abHandle: { position: 'absolute', top: 7, width: 32, height: 72, borderRadius: 9, alignItems: 'center', justifyContent: 'center', zIndex: 3, borderWidth: 2, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4 },
+  abHandle: { position: 'absolute', top: 7, width: 32, height: 72, borderRadius: 9, alignItems: 'center', justifyContent: 'center', zIndex: 3, borderWidth: 2, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4, touchAction: 'none' },
   abHandleA: { backgroundColor: C.lime, borderColor: C.lime },
   abHandleB: { backgroundColor: C.text, borderColor: C.text },
   abHandleUnset: { opacity: 0.65 },

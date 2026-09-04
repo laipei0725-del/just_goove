@@ -6,6 +6,7 @@ import { Image } from 'expo-image';
 import { createVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProjects } from '../store/ProjectContext';
+import { captureVideoFrameAsync } from '../utils/captureVideoFrame';
 
 const C = { bg: '#0D0D0D', card: '#1B1B1B', line: '#2B2B2B', lime: '#C8FF35', text: '#F4F4F2', muted: '#9A9A96' };
 const youtubeId = (value) => value.trim().match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/i)?.[1];
@@ -34,6 +35,15 @@ function ProjectCover({ project, onThumbnailReady }) {
     setThumbnail(null);
 
     if (!localUri) return undefined;
+
+    if (Platform.OS === 'web') {
+      // expo-video cannot extract frames on web, so capture one with a <video> element instead.
+      captureVideoFrameAsync(localUri, { time: 0.05, maxWidth: 480, maxHeight: 640 }).then((frame) => {
+        if (active && frame) setThumbnail(frame);
+        else if (active) setFailed(true);
+      });
+      return () => { active = false; };
+    }
 
     const player = createVideoPlayer(localUri);
     const cacheKey = thumbnailKeyFor(project);
