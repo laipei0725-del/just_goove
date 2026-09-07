@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Alert, Linking, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { Ionicons } from '@expo/vector-icons';
@@ -161,6 +161,122 @@ function ABTimeline({ min, max, a, b, frames = [], onAChange, onBChange }) {
 function ChoiceRow({ label, value, selected, onPress }) {
   return <Pressable onPress={onPress} style={styles.choice}><View><Text style={styles.choiceLabel}>{label}</Text>{value ? <Text style={styles.choiceValue}>{value}</Text> : null}</View><Ionicons name={selected ? 'radio-button-on' : 'radio-button-off'} size={22} color={selected ? C.lime : C.muted} /></Pressable>;
 }
+
+const YT_STATE_TO_NAME = { [-1]: 'unstarted', 0: 'ended', 1: 'playing', 2: 'paused', 3: 'buffering', 5: 'video cued' };
+let youtubeApiPromise = null;
+const loadYoutubeIframeApi = () => {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.reject(new Error('YouTube API 需要瀏覽器環境'));
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  if (!youtubeApiPromise) {
+    youtubeApiPromise = new Promise((resolve, reject) => {
+      const previous = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        if (typeof previous === 'function') previous();
+        resolve(window.YT);
+      };
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      tag.async = true;
+      tag.onerror = () => { youtubeApiPromise = null; reject(new Error('YouTube API 載入失敗')); };
+      document.head.appendChild(tag);
+    });
+  }
+  return youtubeApiPromise;
+};
+
+// react-native-youtube-iframe cannot play on web: its player iframe is hosted
+// on a third-party page that expects the native ReactNativeWebView bridge, so
+// onReady never fires in a browser. This web-only replacement drives the
+// official YouTube IFrame Player API directly and exposes the same imperative
+// API the screen relies on (getCurrentTime/getDuration/seekTo/rates), keeping
+// native playback on react-native-youtube-iframe unchanged.
+const YouTubePlayerWeb = React.forwardRef(function YouTubePlayerWeb({ height, width, videoId, play = false, playbackRate = 1, onReady, onStateChange, onPlaybackRateChange, onError }, ref) {
+  const hostRef = useRef(null);
+  const playerRef = useRef(null);
+  const propsRef = useRef({ play, playbackRate, onReady, onStateChange, onPlaybackRateChange, onError });
+  propsRef.current = { play, playbackRate, onReady, onStateChange, onPlaybackRateChange, onError };
+
+  useImperativeHandle(ref, () => ({
+    getCurrentTime: () => Promise.resolve(playerRef.current ? playerRef.current.getCurrentTime() : 0),
+    getDuration: () => Promise.resolve(playerRef.current ? playerRef.current.getDuration() : 0),
+    getAvailablePlaybackRates: () => Promise.resolve(playerRef.current ? YT_RATES.filter((rate) => rate <= 2) : YT_RATES),
+    seekTo: (seconds, allowSeekAhead) => { playerRef.current?.seekTo(finiteNumber(seconds), Boolean(allowSeekAhead)); },
+    playVideo: () => { playerRef.current?.playVideo(); },
+    pauseVideo: () => { playerRef.current?.pauseVideo(); },
+    getPlaybackRate: () => Promise.resolve(playerRef.current ? playerRef.current.getPlaybackRate() : playbackRate),
+  }), [playbackRate]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    const host = hostRef.current;
+    if (!host || !videoId) return undefined;
+    let disposed = false;
+    let player = null;
+    loadYoutubeIframeApi().then((YT) => {
+      if (disposed || !host || player) return;
+      const mount = document.createElement('div');
+      mount.style.width = '100%';
+      mount.style.height = '100%';
+      host.appendChild(mount);
+      player = new YT.Player(mount, {
+        videoId,
+        playerVars: {
+          controls: 0,
+          rel: 0,
+          iv_load_policy: 3,
+          playsinline: 1,
+          fs: 0,
+          modestbranding: 1,
+          disablekb: 1,
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: (event) => {
+            if (disposed) return;
+            playerRef.current = event.target;
+            const frame = event.target.getIframe?.();
+            if (frame) {
+              frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+              frame.style.width = '100%';
+              frame.style.height = '100%';
+            }
+            const current = propsRef.current;
+            try { event.target.setPlaybackRate(current.playbackRate); } catch {}
+            if (current.play) { try { event.target.playVideo(); } catch {} }
+            current.onReady?.();
+          },
+          onStateChange: (event) => {
+            const name = YT_STATE_TO_NAME[event.data] || 'unstarted';
+            propsRef.current.onStateChange?.(name);
+          },
+          onPlaybackRateChange: (event) => propsRef.current.onPlaybackRateChange?.(Number(event.data)),
+          onError: (event) => propsRef.current.onError?.(Number(event.data)),
+        },
+      });
+    }).catch(() => {});
+    return () => {
+      disposed = true;
+      try { player?.destroy(); } catch {}
+      playerRef.current = null;
+    };
+  }, [videoId]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    try { if (play) player.playVideo(); else player.pauseVideo(); } catch {}
+  }, [play]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player || !Number.isFinite(playbackRate) || playbackRate <= 0) return;
+    try {
+      if (Math.abs(player.getPlaybackRate() - playbackRate) > 0.001) player.setPlaybackRate(playbackRate);
+    } catch {}
+  }, [playbackRate]);
+
+  return <View ref={hostRef} style={{ width, height, overflow: 'hidden' }} accessibilityLabel="YouTube 影片畫面" />;
+});
 
 export default function PracticeScreen({ route, navigation }) {
   useKeepAwake('just-groove-practice', { suppressDeactivateWarnings: Platform.OS === 'web' });
@@ -749,7 +865,7 @@ export default function PracticeScreen({ route, navigation }) {
           style={[styles.videoLayer, isYoutube && styles.youtubeVideoLayer, isYoutube && { bottom: youtubeViewportBottom }, { transform: [{ scaleX: mirrored ? -videoZoom : videoZoom }, { scaleY: videoZoom }] }]}
           accessibilityLabel="影片畫面，可用雙指放大縮小"
         >
-          {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} /> : <YoutubePlayer ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={speed} initialPlayerParams={YOUTUBE_PLAYER_PARAMS} webViewProps={YOUTUBE_WEBVIEW_PROPS} onReady={handleYoutubeReady} onPlaybackRateChange={(rate) => { const actual = Number(rate); if (Number.isFinite(actual)) setSpeed(actual); }} onChangeState={handleYoutubeStateChange} />}
+          {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} /> : (Platform.OS === 'web' ? <YouTubePlayerWeb ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={speed} onReady={handleYoutubeReady} onPlaybackRateChange={(rate) => { const actual = Number(rate); if (Number.isFinite(actual)) setSpeed(actual); }} onStateChange={handleYoutubeStateChange} /> : <YoutubePlayer ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={speed} initialPlayerParams={YOUTUBE_PLAYER_PARAMS} webViewProps={YOUTUBE_WEBVIEW_PROPS} onReady={handleYoutubeReady} onPlaybackRateChange={(rate) => { const actual = Number(rate); if (Number.isFinite(actual)) setSpeed(actual); }} onChangeState={handleYoutubeStateChange} />)}
         </View>
         {isYoutube && <Pressable style={[styles.youtubeTapTarget, { bottom: youtubeViewportBottom }]} onPress={toggleYoutubeControls} accessibilityLabel={controlsVisible ? '隱藏播放控制' : '顯示播放控制'} />}
         {cameraVisible && <View style={[styles.camera, cameraStyle]}><CameraView ref={cameraRef} style={styles.fill} facing="front" mirror mode="video" active={cameraVisible} onCameraReady={() => { cameraReadyRef.current = true; setCameraReady(true); }} onMountError={(event) => { cameraReadyRef.current = false; setCameraReady(false); Alert.alert('相機啟動失敗', event.message); }} /><View style={styles.liveBadge}><Text style={styles.liveText}>{recording ? `REC ${time(recordSeconds)}` : cameraReady ? 'LIVE' : '準備中'}</Text></View></View>}
