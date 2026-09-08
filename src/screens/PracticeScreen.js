@@ -13,7 +13,7 @@ import YoutubePlayer from 'react-native-youtube-iframe';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProjects } from '../store/ProjectContext';
 import RangeEditor from '../components/RangeEditor';
-import { startBrowserTabRecording } from '../utils/browserTabRecorder';
+import { startOriginalVideoRecording } from '../utils/browserTabRecorder';
 const { clamp, playbackBounds, preciseTime } = require('../utils/practiceRange.cjs');
 const { getAspectFitSize } = require('../utils/youtubeLayout.cjs');
 
@@ -212,6 +212,7 @@ export default function PracticeScreen({ route, navigation }) {
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const [countdown, setCountdown] = useState(null);
+  const [recordingResult, setRecordingResult] = useState(null);
   const [activeBookmarkId, setActiveBookmarkId] = useState(project?.activeBookmarkId || null);
   const [draftA, setDraftA] = useState(project?.abStart ?? null);
   const [draftB, setDraftB] = useState(project?.abEnd ?? null);
@@ -568,11 +569,23 @@ export default function PracticeScreen({ route, navigation }) {
     } catch { Alert.alert('保存失敗', '錄影已結束，但檔案無法保存，請確認儲存空間與相簿權限。'); }
   };
 
-  const finishBrowserRecording = ({ uri, mimeType, duration }) => {
+  const finishBrowserRecording = ({ uri, mimeType, duration, blob }) => {
     updateProject(project.id, {
       recordings: [...(project.recordings || []), { id: `${Date.now()}`, uri, mimeType, duration, createdAt: Date.now(), downloaded: true }],
     });
-    setNotice('合成錄影已下載到本機，並保存在此專案紀錄。');
+    setRecordingResult({ uri, mimeType, duration, blob });
+    setNotice('錄影完成，請在彈出視窗按「下載影片」。');
+  };
+
+  const downloadRecording = () => {
+    if (!recordingResult?.uri || typeof document === 'undefined') return;
+    const extension = recordingResult.mimeType?.includes('mp4') ? 'mp4' : 'webm';
+    const link = document.createElement('a');
+    link.href = recordingResult.uri;
+    link.download = `just-groove-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
+    link.click();
+    setRecordingResult(null);
+    setNotice('影片已下載到本機。');
   };
 
   const beginRecording = async () => {
@@ -582,6 +595,10 @@ export default function PracticeScreen({ route, navigation }) {
         && typeof MediaRecorder !== 'undefined';
       if (!canCaptureTab) {
         setNotice('目前瀏覽器不支援分頁合成錄影。請改用桌面版 Chrome；iPhone Chrome 會在原生 App 版支援。');
+        return;
+      }
+      if (source?.type !== 'local') {
+        setNotice('乾淨原影片錄影目前先支援匯入影片；YouTube 受跨來源限制，請先下載影片後匯入。');
         return;
       }
       if (!cameraVisible) {
@@ -598,14 +615,19 @@ export default function PracticeScreen({ route, navigation }) {
       setCountdown(null);
       try {
         setPlaying(true);
-        browserRecorderRef.current = await startBrowserTabRecording({
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        const sourceVideo = document.getElementById('practice-source-video')
+          || document.querySelector('#practice-source-video video')
+          || document.querySelector('video');
+        browserRecorderRef.current = await startOriginalVideoRecording({
+          videoElement: sourceVideo,
           onStopped: (result) => {
             browserRecorderRef.current = null;
             setRecording(false);
             setControlsVisible(true);
             finishBrowserRecording(result);
           },
-          onError: () => { setNotice('合成錄製失敗，請重新允許目前分頁的畫面與音訊。'); setRecording(false); setControlsVisible(true); },
+          onError: () => { setNotice('原影片錄製失敗，請重新播放影片後再試。'); setRecording(false); setControlsVisible(true); },
         });
         setRecordSeconds(0);
         setRecording(true);
@@ -733,7 +755,7 @@ export default function PracticeScreen({ route, navigation }) {
           style={[styles.youtubeVideoLayer, { bottom: youtubeViewportBottom }, !isYoutube && { transform: [{ scaleX: mirrored ? -1 : 1 }] }, isYoutube && Platform.OS !== 'web' && { transform: [{ scaleX: mirrored ? -1 : 1 }] }]}
           accessibilityLabel="影片顯示區"
         >
-          {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} playsInline fullscreenOptions={{ enable: false }} surfaceType="textureView" /> : (Platform.OS === 'web' ? <YouTubePlayerWeb mirrored={mirrored} ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={requestedSpeed} onReady={handleYoutubeReady} onPlaybackRateChange={handleRateChange} onStateChange={handleYoutubeStateChange} onError={() => { setYoutubeReady(false); setNotice("YouTube 無法載入，請確認影片允許嵌入播放。"); }} /> : <YoutubePlayer ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={requestedSpeed} initialPlayerParams={YOUTUBE_PLAYER_PARAMS} webViewProps={YOUTUBE_WEBVIEW_PROPS} onReady={handleYoutubeReady} onPlaybackRateChange={handleRateChange} onChangeState={handleYoutubeStateChange} />)}
+          {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} nativeID="practice-source-video" playsInline fullscreenOptions={{ enable: false }} surfaceType="textureView" /> : (Platform.OS === 'web' ? <YouTubePlayerWeb mirrored={mirrored} ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={requestedSpeed} onReady={handleYoutubeReady} onPlaybackRateChange={handleRateChange} onStateChange={handleYoutubeStateChange} onError={() => { setYoutubeReady(false); setNotice("YouTube 無法載入，請確認影片允許嵌入播放。"); }} /> : <YoutubePlayer ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={source.id} playbackRate={requestedSpeed} initialPlayerParams={YOUTUBE_PLAYER_PARAMS} webViewProps={YOUTUBE_WEBVIEW_PROPS} onReady={handleYoutubeReady} onPlaybackRateChange={handleRateChange} onChangeState={handleYoutubeStateChange} />)}
         </View>
         {isYoutube && <Pressable style={[styles.youtubeTapTarget, { bottom: youtubeViewportBottom }]} onPress={toggleYoutubeControls} accessibilityLabel={controlsVisible ? '隱藏播放控制' : '顯示播放控制'} />}
         {cameraVisible && <View style={[styles.camera, cameraStyle]}><CameraView ref={cameraRef} style={styles.fill} facing="front" mirror mode="video" active={cameraVisible} onCameraReady={() => { cameraReadyRef.current = true; setCameraReady(true); }} onMountError={(event) => { cameraReadyRef.current = false; setCameraReady(false); Alert.alert('相機啟動失敗', event.message); }} /><View style={styles.liveBadge}><Text style={styles.liveText}>{recording ? `REC ${time(recordSeconds)}` : cameraReady ? 'LIVE' : '準備中'}</Text></View></View>}
@@ -754,6 +776,14 @@ export default function PracticeScreen({ route, navigation }) {
 
       </View>
       {!!(storageError || notice) && <View style={styles.notice} accessibilityLiveRegion="polite"><Text style={styles.noticeText}>{storageError || notice}</Text></View>}
+
+      <Modal visible={Boolean(recordingResult)} transparent animationType="fade" onRequestClose={() => setRecordingResult(null)}>
+        <View style={styles.recordingModalBackdrop}><View style={styles.recordingModal}>
+          <Text style={styles.recordingModalTitle}>原影片錄製完成</Text>
+          <Text style={styles.recordingModalText}>已排除 App 框線與相機畫面，共 {time(recordingResult?.duration || 0)}。</Text>
+          <View style={styles.recordingModalActions}><Pressable style={styles.secondaryAction} onPress={() => setRecordingResult(null)}><Text style={styles.actionText}>關閉</Text></Pressable><Pressable style={styles.primaryAction} onPress={downloadRecording}><Text style={styles.primaryText}>下載影片</Text></Pressable></View>
+        </View></View>
+      </Modal>
 
       <EditorSheet visible={panelOpen && !nameDialog && !managedBookmark} title="AB 書籤" onClose={closeAbPanel}>
         <ScrollView horizontal style={{ flexGrow: 0, marginBottom: 12 }} contentContainerStyle={{ gap: 8 }}>
@@ -838,6 +868,11 @@ Object.assign(styles, {
   recordButton: { width: 62, borderRadius: 14, backgroundColor: 'rgba(200,255,53,.10)' },
   recordButtonActive: { backgroundColor: 'rgba(255,104,104,.14)' },
   recordLabel: { color: C.lime, fontFamily: 'ZenGothic-Bold', fontSize: 10 },
+  recordingModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,.78)', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  recordingModal: { width: '100%', maxWidth: 460, borderRadius: 22, backgroundColor: '#1B1B1B', borderWidth: 1, borderColor: '#434343', padding: 20 },
+  recordingModalTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 19 },
+  recordingModalText: { color: C.muted, fontSize: 13, lineHeight: 20, marginTop: 9 },
+  recordingModalActions: { flexDirection: 'row', gap: 9, marginTop: 18 },
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.15)' },
   editorSheet: { backgroundColor: '#191B17', borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: '#44483B', paddingHorizontal: 18, paddingBottom: 8, width: '100%', maxWidth: 700, alignSelf: 'center' },
   sheetHeading: { minHeight: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
