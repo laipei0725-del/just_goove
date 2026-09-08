@@ -577,6 +577,13 @@ export default function PracticeScreen({ route, navigation }) {
 
   const beginRecording = async () => {
     if (Platform.OS === 'web') {
+      const canCaptureTab = typeof navigator !== 'undefined'
+        && Boolean(navigator.mediaDevices?.getDisplayMedia)
+        && typeof MediaRecorder !== 'undefined';
+      if (!canCaptureTab) {
+        setNotice('目前瀏覽器不支援分頁合成錄影。請改用桌面版 Chrome；iPhone Chrome 會在原生 App 版支援。');
+        return;
+      }
       if (!cameraVisible) {
         await toggleCamera();
         await new Promise((resolve) => setTimeout(resolve, 900));
@@ -739,7 +746,7 @@ export default function PracticeScreen({ route, navigation }) {
         {controlsShown && <View style={styles.timeline}><Text style={styles.clock}>{time(position)}</Text><Slider style={styles.slider} minimumValue={trimStart} maximumValue={timelineMaximum} value={timelineValue} onSlidingStart={() => keepYoutubeControlsVisible(false)} onSlidingComplete={(value) => { seek(value); keepYoutubeControlsVisible(true); }} minimumTrackTintColor={C.lime} maximumTrackTintColor="#56565A" thumbTintColor={C.text} /><Text style={styles.clock}>{time(total)}</Text></View>}
         {controlsShown && <View style={styles.bottomBar}>
           <Pressable style={styles.barButton} onPress={openAbPanel} accessibilityLabel="開啟AB書籤"><Ionicons name="bookmark-outline" size={21} color={playMode === 'ab-loop' ? C.lime : C.text} /><Text style={styles.barLabel}>AB 書籤</Text></Pressable>
-          <Pressable style={styles.barButton} onPress={toggleRecording}><Ionicons name={recording ? 'stop-circle' : 'radio-button-on'} size={25} color={recording ? C.danger : C.text} /><Text style={styles.barLabel}>{recording ? '停止' : '錄影'}</Text></Pressable>
+          <Pressable style={[styles.barButton, styles.recordButton, recording && styles.recordButtonActive]} onPress={toggleRecording} accessibilityLabel={recording ? '停止錄影' : '開始錄影'}><Ionicons name={recording ? 'stop-circle' : 'radio-button-on'} size={25} color={recording ? C.danger : C.lime} /><Text style={[styles.barLabel, styles.recordLabel]}>{recording ? '停止' : '錄影'}</Text></Pressable>
           <Pressable style={styles.play} accessibilityLabel={playing ? "暫停影片" : "播放影片"} onPress={togglePlayback} disabled={source?.type === 'youtube' && !youtubeReady}><Ionicons name={playing ? 'pause' : 'play'} size={28} color={C.bg} /></Pressable>
           <Pressable style={styles.speedButton} accessibilityLabel="調整播放速度" onPress={() => { setSpeedOpen(true); keepYoutubeControlsVisible(false); }}><Text style={styles.speedText}>{speedLabel(speed)}</Text></Pressable>
           <Pressable style={styles.barButton} accessibilityLabel="剪輯影片長度" onPress={openTrim}><Ionicons name="cut-outline" size={23} color={C.text} /><Text style={styles.barLabel}>剪輯</Text></Pressable>
@@ -828,6 +835,9 @@ const styles = StyleSheet.create({
 });
 
 Object.assign(styles, {
+  recordButton: { width: 62, borderRadius: 14, backgroundColor: 'rgba(200,255,53,.10)' },
+  recordButtonActive: { backgroundColor: 'rgba(255,104,104,.14)' },
+  recordLabel: { color: C.lime, fontFamily: 'ZenGothic-Bold', fontSize: 10 },
   sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,.15)' },
   editorSheet: { backgroundColor: '#191B17', borderTopLeftRadius: 24, borderTopRightRadius: 24, borderWidth: 1, borderColor: '#44483B', paddingHorizontal: 18, paddingBottom: 8, width: '100%', maxWidth: 700, alignSelf: 'center' },
   sheetHeading: { minHeight: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

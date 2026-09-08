@@ -146,6 +146,7 @@ export default function HomeScreen({ navigation }) {
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
       <View style={styles.header}><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>選一段，開始練。</Text></View><Pressable style={styles.headerButton} onPress={() => Alert.alert('APP 設定', '練舞相關設定會保存在每個專案中。')} accessibilityLabel="APP 設定"><Ionicons name="settings-outline" size={23} color={C.text} /></Pressable></View>
       <Pressable style={styles.primary} onPress={() => setAddOpen(true)}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
+      <View style={styles.recordingHint} accessibilityLabel="錄影功能提示"><Ionicons name="radio-button-on" size={18} color={C.lime} /><View style={{ flex: 1 }}><Text style={styles.recordingHintTitle}>錄影在練舞畫面</Text><Text style={styles.recordingHintText}>開啟專案後，底部工具列會看到「錄影」。目前合成錄影需要桌面版 Chrome。</Text></View></View>
       {storageError ? <View style={styles.storageWarning}><Ionicons name="shield-checkmark-outline" size={18} color={C.lime} /><Text style={styles.storageWarningText}>{storageError}</Text></View> : null}
       <View style={styles.sectionRow}><Text style={styles.sectionTitle}>我的練舞專案</Text><Text style={styles.count}>{projects.length}</Text></View>
       {!hydrated ? <ActivityIndicator color={C.lime} style={{ marginTop: 60 }} /> : (
@@ -181,4 +182,7 @@ Object.assign(styles, {
   youtubeSheet: { width: '100%', maxWidth: 520 },
   storageWarning: { flexDirection: 'row', gap: 9, alignItems: 'flex-start', borderRadius: 14, backgroundColor: '#20281A', borderWidth: 1, borderColor: '#4B6421', padding: 12, marginBottom: 16 },
   storageWarningText: { flex: 1, color: C.text, fontSize: 12, lineHeight: 18 },
+  recordingHint: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', borderRadius: 14, backgroundColor: '#20281A', borderWidth: 1, borderColor: '#4B6421', padding: 12, marginBottom: 18 },
+  recordingHintTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 12 },
+  recordingHintText: { color: C.muted, fontSize: 11, lineHeight: 17, marginTop: 3 },
 });
