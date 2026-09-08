@@ -37,7 +37,7 @@ if (!fs.existsSync(layoutPath)) {
 }
 
 const contracts = [
-  [/addOrientationChangeListener/, 'YouTube 頁面必須訂閱系統 Orientation 變化。'],
+  [/const immersiveYoutube = isYoutube && fullscreen/, 'YouTube 全螢幕只能由 App 的全螢幕按鈕控制。'],
   [/youtubeViewportSize/, 'YouTube Player 必須依實際 Container onLayout 尺寸計算。'],
   [/handleYoutubeViewportLayout/, '缺少 YouTube Container onLayout 處理。'],
   [/controlsVisible/, '缺少 Controls 顯示／隱藏狀態。'],

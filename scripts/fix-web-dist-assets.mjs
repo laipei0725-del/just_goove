@@ -36,7 +36,10 @@ const files = (await walk(distDir)).filter((filePath) => {
 
 for (const filePath of files) {
   const current = await fs.readFile(filePath, 'utf8');
-  const next = current.replaceAll('/assets/node_modules/', '/assets/expo-node-assets/');
+  let next = current.replaceAll('/assets/node_modules/', '/assets/expo-node-assets/');
+  if (filePath.endsWith('index.html')) {
+    next = next.replace(/<html[^>]*>/, '<html lang="zh-Hant" translate="no">').replace('<head>', '<head><meta name="google" content="notranslate" />');
+  }
   if (next !== current) await fs.writeFile(filePath, next);
 }
 
