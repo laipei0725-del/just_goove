@@ -1,7 +1,7 @@
 // Captures a frame from a local video file using a browser <video> element
 // and draws it to a canvas. Web-only fallback for expo-video's
 // generateThumbnailsAsync, which is not supported on web yet.
-export function captureVideoFrameAsync(uri, { time = 0.05, maxWidth = 480, maxHeight = 640 } = {}) {
+export function captureVideoFrameAsync(uri, { time = 0, maxWidth = 480, maxHeight = 640 } = {}) {
   return new Promise((resolve) => {
     if (typeof document === 'undefined') {
       resolve(null);

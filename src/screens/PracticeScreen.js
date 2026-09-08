@@ -13,6 +13,7 @@ import YoutubePlayer from 'react-native-youtube-iframe';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProjects } from '../store/ProjectContext';
 import RangeEditor from '../components/RangeEditor';
+import { startBrowserTabRecording } from '../utils/browserTabRecorder';
 const { clamp, playbackBounds, preciseTime } = require('../utils/practiceRange.cjs');
 const { getAspectFitSize } = require('../utils/youtubeLayout.cjs');
 
@@ -214,6 +215,7 @@ export default function PracticeScreen({ route, navigation }) {
   const [activeBookmarkId, setActiveBookmarkId] = useState(project?.activeBookmarkId || null);
   const [draftA, setDraftA] = useState(project?.abStart ?? null);
   const [draftB, setDraftB] = useState(project?.abEnd ?? null);
+  const browserRecorderRef = useRef(null);
 
   const source = project?.source;
   const isYoutube = source?.type === 'youtube';
@@ -566,9 +568,44 @@ export default function PracticeScreen({ route, navigation }) {
     } catch { Alert.alert('保存失敗', '錄影已結束，但檔案無法保存，請確認儲存空間與相簿權限。'); }
   };
 
+  const finishBrowserRecording = ({ uri, mimeType, duration }) => {
+    updateProject(project.id, {
+      recordings: [...(project.recordings || []), { id: `${Date.now()}`, uri, mimeType, duration, createdAt: Date.now(), downloaded: true }],
+    });
+    setNotice('合成錄影已下載到本機，並保存在此專案紀錄。');
+  };
+
   const beginRecording = async () => {
     if (Platform.OS === 'web') {
-      Alert.alert('網頁版暫不支援錄影', '請使用 iPhone 或 iPad App 測試相機錄影與存入相簿。');
+      if (!cameraVisible) {
+        await toggleCamera();
+        await new Promise((resolve) => setTimeout(resolve, 900));
+      }
+      setControlsVisible(false);
+      setNotice('請在 Chrome 選擇「目前分頁」，並勾選分享分頁音訊。');
+      setCountdown(3);
+      for (let value = 3; value > 0; value -= 1) {
+        setCountdown(value);
+        await new Promise((resolve) => setTimeout(resolve, 850));
+      }
+      setCountdown(null);
+      try {
+        setPlaying(true);
+        browserRecorderRef.current = await startBrowserTabRecording({
+          onStopped: (result) => {
+            browserRecorderRef.current = null;
+            setRecording(false);
+            setControlsVisible(true);
+            finishBrowserRecording(result);
+          },
+          onError: () => { setNotice('合成錄製失敗，請重新允許目前分頁的畫面與音訊。'); setRecording(false); setControlsVisible(true); },
+        });
+        setRecordSeconds(0);
+        setRecording(true);
+      } catch (error) {
+        setCountdown(null); setControlsVisible(true);
+        setNotice(error?.message || 'Chrome 未允許目前分頁的畫面與音訊錄製。');
+      }
       return;
     }
     let nextCameraPermission = cameraPermission;
@@ -607,7 +644,10 @@ export default function PracticeScreen({ route, navigation }) {
     finally { setRecording(false); }
   };
 
-  const stopRecording = () => cameraRef.current?.stopRecording();
+  const stopRecording = () => {
+    if (Platform.OS === 'web') { browserRecorderRef.current?.stop(); return; }
+    cameraRef.current?.stopRecording();
+  };
   const toggleRecording = () => {
     keepYoutubeControlsVisible(false);
     return recording ? stopRecording() : beginRecording();

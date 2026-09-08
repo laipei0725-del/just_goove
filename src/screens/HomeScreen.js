@@ -23,7 +23,7 @@ const formatDate = (value) => {
   return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
 };
 
-function ProjectCover({ project, onThumbnailReady }) {
+function ProjectCover({ project, onCoverReady }) {
   const localUri = project.source?.type === 'local' ? project.source.uri : null;
   const [thumbnail, setThumbnail] = useState(null);
   const [failed, setFailed] = useState(false);
@@ -35,11 +35,15 @@ function ProjectCover({ project, onThumbnailReady }) {
     setThumbnail(null);
 
     if (!localUri) return undefined;
+    if (project.coverUri) {
+      setThumbnail(project.coverUri);
+      return undefined;
+    }
 
     if (Platform.OS === 'web') {
       // expo-video cannot extract frames on web, so capture one with a <video> element instead.
-      captureVideoFrameAsync(localUri, { time: 0.05, maxWidth: 480, maxHeight: 640 }).then((frame) => {
-        if (active && frame) setThumbnail(frame);
+      captureVideoFrameAsync(localUri, { time: 0, maxWidth: 480, maxHeight: 640 }).then((frame) => {
+        if (active && frame) { setThumbnail(frame); onCoverReady?.(frame); }
         else if (active) setFailed(true);
       });
       return () => { active = false; };
@@ -70,7 +74,7 @@ function ProjectCover({ project, onThumbnailReady }) {
             let imageRef = images[0];
             try { imageRef = await Image.loadAsync(images[0]); } catch {}
             try { await Image.writeToCacheAsync(imageRef, cacheKey); } catch {}
-            if (active && project.thumbnailKey !== cacheKey) onThumbnailReady?.(cacheKey);
+            if (active) onCoverReady?.(imageRef);
             setThumbnail(imageRef);
             return;
           }
@@ -129,7 +133,7 @@ export default function HomeScreen({ navigation }) {
   const renderProject = ({ item }) => (
     <Pressable onPress={() => openProject(item)} style={({ pressed }) => [styles.card, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={`開始練習 ${item.title}`}>
       <View style={styles.cover}>
-        <ProjectCover project={item} onThumbnailReady={(thumbnailKey) => updateProject(item.id, { thumbnailKey })} />
+        <ProjectCover project={item} onCoverReady={(coverUri) => updateProject(item.id, { coverUri })} />
         <Pressable onPress={() => manage(item)} hitSlop={10} style={styles.more} accessibilityLabel={`${item.title} 更多選項`}><Ionicons name="ellipsis-vertical" size={20} color={C.text} /></Pressable>
         <View style={styles.sourceBadge}><Ionicons name={item.source?.type === 'youtube' ? 'logo-youtube' : 'phone-portrait-outline'} size={12} color={C.bg} /><Text style={styles.sourceText}>{item.source?.type === 'youtube' ? 'YouTube' : '相簿'}</Text></View>
       </View>
