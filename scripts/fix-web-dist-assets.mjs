@@ -38,7 +38,12 @@ for (const filePath of files) {
   const current = await fs.readFile(filePath, 'utf8');
   let next = current.replaceAll('/assets/node_modules/', '/assets/expo-node-assets/');
   if (filePath.endsWith('index.html')) {
-    next = next.replace(/<html[^>]*>/, '<html lang="zh-Hant" translate="no">').replace('<head>', '<head><meta name="google" content="notranslate" />');
+    next = next
+      .replace(/<html[^>]*>/, '<html lang="zh-Hant" translate="no">')
+      .replace('<head>', '<head><meta name="google" content="notranslate" />')
+      .replace(/<title>.*?<\/title>/, '<title>JUST GROOVE ｜ 選一段，開始練</title>')
+      .replace(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/gi, '')
+      .replace('</head>', '<link rel="icon" type="image/svg+xml" href="/logo.svg" /></head>');
   }
   if (next !== current) await fs.writeFile(filePath, next);
 }

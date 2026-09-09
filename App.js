@@ -7,9 +7,10 @@ import { useFonts, ZenKakuGothicNew_500Medium, ZenKakuGothicNew_700Bold } from '
 import { JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono';
 import HomeScreen from './src/screens/HomeScreen';
 import PracticeScreen from './src/screens/PracticeScreen';
+import LandingScreen from './src/screens/LandingScreen';
 import { ProjectProvider } from './src/store/ProjectContext';
 import { AuthProvider } from './src/context/AuthContext';
-import BrandIntroOverlay from './src/components/BrandIntroOverlay';
+import AppErrorBoundary from './src/components/AppErrorBoundary';
 
 const Stack = createNativeStackNavigator();
 const theme = {
@@ -32,13 +33,15 @@ export default function App() {
     <SafeAreaProvider>
       <AuthProvider>
         <ProjectProvider>
-          <NavigationContainer theme={theme}>
-            <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0D0D0D' } }}>
-              <Stack.Screen name="Home" component={HomeScreen} />
-              <Stack.Screen name="Practice" component={PracticeScreen} />
-            </Stack.Navigator>
-          </NavigationContainer>
-          <BrandIntroOverlay />
+          <AppErrorBoundary>
+            <NavigationContainer theme={theme}>
+              <Stack.Navigator initialRouteName="Landing" screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0D0D0D' } }}>
+                <Stack.Screen name="Landing" component={LandingScreen} />
+                <Stack.Screen name="Home" component={HomeScreen} />
+                <Stack.Screen name="Practice">{(props) => <AppErrorBoundary resetKey={props.route.params?.projectId}><PracticeScreen {...props} /></AppErrorBoundary>}</Stack.Screen>
+              </Stack.Navigator>
+            </NavigationContainer>
+          </AppErrorBoundary>
         </ProjectProvider>
       </AuthProvider>
     </SafeAreaProvider>

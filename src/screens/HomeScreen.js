@@ -11,9 +11,10 @@ import ProjectMenu from '../components/ProjectMenu';
 import OnboardingOverlay from '../components/OnboardingOverlay';
 import { useAuth } from '../context/AuthContext';
 import AuthModal from '../components/AuthModal';
+import AppErrorBoundary from '../components/AppErrorBoundary';
+const { extractYouTubeId } = require('../utils/youtubeUrl.cjs');
 
 const C = { bg: '#0D0D0D', card: '#1B1B1B', line: '#2B2B2B', lime: '#C8FF35', text: '#F4F4F2', muted: '#9A9A96' };
-const youtubeId = (value) => value.trim().match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/i)?.[1];
 const BRAND_LOGO = require('../../assets/icon.png');
 const thumbnailKeyFor = (project) => project.thumbnailKey || `justgroove-thumbnail-${project.id}`;
 const formatDuration = (durationMs) => {
@@ -110,6 +111,7 @@ export default function HomeScreen({ navigation }) {
   const [addOpen, setAddOpen] = useState(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [youtubeError, setYoutubeError] = useState('');
   const [menuProject, setMenuProject] = useState(null);
   const [renameProject, setRenameProject] = useState(null);
   const [renameValue, setRenameValue] = useState('');
@@ -124,7 +126,16 @@ export default function HomeScreen({ navigation }) {
 
   const openProject = (project) => navigation.navigate('Practice', { projectId: project.id });
 
+  const requireAccount = (next) => {
+    if (!isGuest) return next();
+    Alert.alert('請先登入以儲存練舞專案', '登入後即可新增影片、同步設定，並在不同裝置接續練習。', [
+      { text: '取消', style: 'cancel' },
+      { text: '立即登入', onPress: () => setAuthOpen(true) },
+    ]);
+  };
+
   const importLocal = async () => {
+    if (isGuest) return requireAccount(() => {});
     setAddOpen(false);
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return Alert.alert('需要相簿權限', '請允許 JUST GROOVE 讀取影片，才能建立練舞專案。');
@@ -136,10 +147,15 @@ export default function HomeScreen({ navigation }) {
   };
 
   const importYoutube = () => {
-    const id = youtubeId(youtubeUrl);
-    if (!id) return Alert.alert('無法辨識連結', '請貼上有效的 YouTube 影片或 Shorts 連結。');
-    const project = addProject({ title: 'YouTube 練習', source: { type: 'youtube', id, uri: youtubeUrl.trim() }, coverUri: `https://img.youtube.com/vi/${id}/hqdefault.jpg` });
-    setYoutubeUrl(''); setYoutubeOpen(false); openProject(project);
+    if (isGuest) return requireAccount(() => {});
+    const id = extractYouTubeId(youtubeUrl);
+    if (!id) return setYoutubeError('請輸入正確的 YouTube 影片連結');
+    try {
+      const project = addProject({ title: 'YouTube 練習', source: { type: 'youtube', id, uri: `https://www.youtube.com/watch?v=${id}` }, coverUri: `https://img.youtube.com/vi/${id}/hqdefault.jpg`, durationMs: null });
+      setYoutubeUrl(''); setYoutubeError(''); setYoutubeOpen(false); openProject(project);
+    } catch {
+      setYoutubeError('影片目前無法加入，請稍後再試');
+    }
   };
 
   const sortedProjects = [...projects].sort((a, b) => Number(b.pinned) - Number(a.pinned) || (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -150,7 +166,7 @@ export default function HomeScreen({ navigation }) {
   const renderProject = ({ item }) => (
     <Pressable onPress={() => openProject(item)} style={({ pressed }) => [styles.card, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={`開始練習 ${item.title}`}>
       <View style={styles.cover}>
-        <ProjectCover project={item} onCoverReady={(coverUri) => updateProject(item.id, { coverUri })} />
+        <AppErrorBoundary resetKey={item.id}><ProjectCover project={item} onCoverReady={(coverUri) => updateProject(item.id, { coverUri })} /></AppErrorBoundary>
         <Pressable onPress={() => setMenuProject(item)} hitSlop={10} style={styles.more} accessibilityLabel={`${item.title} 更多選項`}><Ionicons name="ellipsis-vertical" size={20} color={C.text} /></Pressable>
         {item.pinned ? <View style={styles.pinBadge}><Ionicons name="pin" size={12} color={C.bg} /></View> : null}
         <View style={styles.sourceBadge}><Ionicons name={item.source?.type === 'youtube' ? 'logo-youtube' : 'phone-portrait-outline'} size={12} color={C.bg} /><Text style={styles.sourceText}>{item.source?.type === 'youtube' ? 'YouTube' : '相簿'}</Text></View>
@@ -162,8 +178,8 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
-      <View style={styles.header}><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>{isGuest ? '訪客模式 · 選一段，開始練。' : `嗨，${user?.email?.split('@')[0] || '舞者'} · 選一段，開始練。`}</Text></View><Pressable style={styles.headerButton} onPress={() => isGuest ? setAuthOpen(true) : signOut?.()} accessibilityLabel="帳號設定"><Ionicons name={isGuest ? 'person-outline' : 'person'} size={23} color={C.text} /></Pressable></View>
-      <Pressable style={styles.primary} onPress={() => setAddOpen(true)}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
+      <View style={styles.header}><Pressable style={styles.brandLink} onPress={() => navigation.navigate('Home')} accessibilityLabel="返回 JUST GROOVE 首頁"><Image source={BRAND_LOGO} style={styles.brandIcon} contentFit="contain" /><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>{isGuest ? '訪客模式 · 選一段，開始練。' : `嗨，${user?.email?.split('@')[0] || '舞者'} · 選一段，開始練。`}</Text></View></Pressable><Pressable style={styles.headerButton} onPress={() => isGuest ? setAuthOpen(true) : signOut?.()} accessibilityLabel="帳號設定"><Ionicons name={isGuest ? 'person-outline' : 'person'} size={23} color={C.text} /></Pressable></View>
+      <Pressable style={styles.primary} onPress={() => requireAccount(() => setAddOpen(true))}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
       <View style={styles.recordingHint} accessibilityLabel="錄影功能提示"><Ionicons name="radio-button-on" size={18} color={C.lime} /><View style={{ flex: 1 }}><Text style={styles.recordingHintTitle}>錄影在練舞畫面</Text><Text style={styles.recordingHintText}>開啟專案後，底部工具列會看到「錄影」。目前合成錄影需要桌面版 Chrome。</Text></View></View>
       {storageError ? <View style={styles.storageWarning}><Ionicons name="shield-checkmark-outline" size={18} color={C.lime} /><Text style={styles.storageWarningText}>{storageError}</Text></View> : null}
       <View style={styles.sectionRow}><Text style={styles.sectionTitle}>我的練舞專案</Text><Text style={styles.count}>{projects.length}</Text></View>
@@ -177,7 +193,8 @@ export default function HomeScreen({ navigation }) {
           <Pressable style={styles.centeredBackdrop} onPress={() => setYoutubeOpen(false)}>
             <View style={[styles.sheet, styles.youtubeSheet]} onStartShouldSetResponder={() => true}>
               <Text style={styles.sheetTitle}>YouTube 練舞專案</Text>
-              <TextInput value={youtubeUrl} onChangeText={setYoutubeUrl} placeholder="貼上 YouTube 連結" placeholderTextColor="#69696D" autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="done" style={styles.input} />
+              <TextInput value={youtubeUrl} onChangeText={(value) => { setYoutubeUrl(value); if (youtubeError) setYoutubeError(''); }} placeholder="貼上 YouTube 連結" placeholderTextColor="#69696D" autoCapitalize="none" autoCorrect={false} keyboardType="url" returnKeyType="done" style={[styles.input, youtubeError && styles.inputError]} />
+              {youtubeError ? <Text accessibilityRole="alert" style={styles.youtubeError}>{youtubeError}</Text> : null}
               <View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setYoutubeOpen(false)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={importYoutube}><Text style={styles.confirmText}>建立專案</Text></Pressable></View>
             </View>
           </Pressable>
@@ -193,7 +210,7 @@ export default function HomeScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg, paddingHorizontal: 18 }, header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }, brand: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 23, letterSpacing: 1.5 }, subtitle: { color: C.muted, marginTop: 3 }, headerButton: { width: 46, height: 46, borderRadius: 16, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.line }, primary: { minHeight: 56, borderRadius: 19, backgroundColor: C.lime, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 25 }, primaryText: { color: C.bg, fontFamily: 'ZenGothic-Bold', fontSize: 16 }, sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }, sectionTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 17 }, count: { color: C.lime, fontFamily: 'JetBrainsMono' }, list: { paddingBottom: 30 }, columns: { gap: 12 }, card: { flex: 1, marginBottom: 18, maxWidth: '49%' }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, cover: { aspectRatio: 0.84, borderRadius: 22, overflow: 'hidden', backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.line }, coverImage: { width: '100%', height: '100%' }, more: { position: 'absolute', top: 10, right: 10, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(10,10,10,.8)', alignItems: 'center', justifyContent: 'center' }, sourceBadge: { position: 'absolute', left: 10, bottom: 10, borderRadius: 10, backgroundColor: C.lime, paddingHorizontal: 8, paddingVertical: 5, flexDirection: 'row', gap: 4, alignItems: 'center' }, sourceText: { color: C.bg, fontSize: 9, fontFamily: 'ZenGothic-Bold' }, cardTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 14, lineHeight: 19, marginTop: 9 }, cardMeta: { color: C.muted, fontSize: 10, marginTop: 4 }, empty: { alignItems: 'center', paddingTop: 75 }, emptyTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 18, marginTop: 15 }, emptyText: { color: C.muted, marginTop: 7, textAlign: 'center' }, backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,.72)', justifyContent: 'flex-end', padding: 16 }, sheet: { backgroundColor: '#1D1D1D', borderRadius: 26, padding: 20, paddingBottom: 28, borderWidth: 1, borderColor: '#343434' }, sheetTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 19, marginBottom: 16 }, option: { minHeight: 68, borderRadius: 18, backgroundColor: '#121212', borderWidth: 1, borderColor: C.line, flexDirection: 'row', gap: 13, alignItems: 'center', paddingHorizontal: 16, marginTop: 10 }, optionTitle: { color: C.text, fontFamily: 'ZenGothic-Bold' }, optionText: { color: C.muted, fontSize: 11, marginTop: 3 }, input: { minHeight: 52, borderRadius: 16, backgroundColor: '#111', borderWidth: 1, borderColor: '#383838', color: C.text, paddingHorizontal: 15 }, actions: { flexDirection: 'row', gap: 10, marginTop: 16 }, cancel: { flex: 1, minHeight: 50, borderRadius: 16, borderWidth: 1, borderColor: '#414141', alignItems: 'center', justifyContent: 'center' }, confirm: { flex: 1, minHeight: 50, borderRadius: 16, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }, cancelText: { color: C.text }, confirmText: { color: C.bg, fontFamily: 'ZenGothic-Bold' },
+  container: { flex: 1, backgroundColor: C.bg, paddingHorizontal: 18 }, header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }, brandLink: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 1 }, brandIcon: { width: 42, height: 42, borderRadius: 12 }, brand: { color: C.lime, fontFamily: 'ZenGothic-Bold', fontSize: 20, letterSpacing: 1.5 }, subtitle: { color: C.muted, marginTop: 3, fontSize: 11 }, headerButton: { width: 46, height: 46, borderRadius: 16, backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.line }, primary: { minHeight: 56, borderRadius: 19, backgroundColor: C.lime, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 25 }, primaryText: { color: C.bg, fontFamily: 'ZenGothic-Bold', fontSize: 16 }, sectionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }, sectionTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 17 }, count: { color: C.lime, fontFamily: 'JetBrainsMono' }, list: { paddingBottom: 30 }, columns: { gap: 12 }, card: { flex: 1, marginBottom: 18, maxWidth: '49%' }, pressed: { opacity: 0.78, transform: [{ scale: 0.98 }] }, cover: { aspectRatio: 0.84, borderRadius: 22, overflow: 'hidden', backgroundColor: C.card, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: C.line }, coverImage: { width: '100%', height: '100%' }, more: { position: 'absolute', top: 10, right: 10, width: 38, height: 38, borderRadius: 19, backgroundColor: 'rgba(10,10,10,.8)', alignItems: 'center', justifyContent: 'center' }, sourceBadge: { position: 'absolute', left: 10, bottom: 10, borderRadius: 10, backgroundColor: C.lime, paddingHorizontal: 8, paddingVertical: 5, flexDirection: 'row', gap: 4, alignItems: 'center' }, sourceText: { color: C.bg, fontSize: 9, fontFamily: 'ZenGothic-Bold' }, cardTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 14, lineHeight: 19, marginTop: 9 }, cardMeta: { color: C.muted, fontSize: 10, marginTop: 4 }, empty: { alignItems: 'center', paddingTop: 75 }, emptyTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 18, marginTop: 15 }, emptyText: { color: C.muted, marginTop: 7, textAlign: 'center' }, backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,.72)', justifyContent: 'flex-end', padding: 16 }, sheet: { backgroundColor: '#1D1D1D', borderRadius: 26, padding: 20, paddingBottom: 28, borderWidth: 1, borderColor: '#343434' }, sheetTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 19, marginBottom: 16 }, option: { minHeight: 68, borderRadius: 18, backgroundColor: '#121212', borderWidth: 1, borderColor: C.line, flexDirection: 'row', gap: 13, alignItems: 'center', paddingHorizontal: 16, marginTop: 10 }, optionTitle: { color: C.text, fontFamily: 'ZenGothic-Bold' }, optionText: { color: C.muted, fontSize: 11, marginTop: 3 }, input: { minHeight: 52, borderRadius: 16, backgroundColor: '#111', borderWidth: 1, borderColor: '#383838', color: C.text, paddingHorizontal: 15 }, inputError: { borderColor: '#FF6868' }, youtubeError: { color: '#FF8686', fontSize: 12, marginTop: 8 }, actions: { flexDirection: 'row', gap: 10, marginTop: 16 }, cancel: { flex: 1, minHeight: 50, borderRadius: 16, borderWidth: 1, borderColor: '#414141', alignItems: 'center', justifyContent: 'center' }, confirm: { flex: 1, minHeight: 50, borderRadius: 16, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' }, cancelText: { color: C.text }, confirmText: { color: C.bg, fontFamily: 'ZenGothic-Bold' },
 });
 
 Object.assign(styles, {
