@@ -8,6 +8,8 @@ import { JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono';
 import HomeScreen from './src/screens/HomeScreen';
 import PracticeScreen from './src/screens/PracticeScreen';
 import { ProjectProvider } from './src/store/ProjectContext';
+import { AuthProvider } from './src/context/AuthContext';
+import BrandIntroOverlay from './src/components/BrandIntroOverlay';
 
 const Stack = createNativeStackNavigator();
 const theme = {
@@ -28,14 +30,17 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <ProjectProvider>
-        <NavigationContainer theme={theme}>
-          <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0D0D0D' } }}>
-            <Stack.Screen name="Home" component={HomeScreen} />
-            <Stack.Screen name="Practice" component={PracticeScreen} />
-          </Stack.Navigator>
-        </NavigationContainer>
-      </ProjectProvider>
+      <AuthProvider>
+        <ProjectProvider>
+          <NavigationContainer theme={theme}>
+            <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0D0D0D' } }}>
+              <Stack.Screen name="Home" component={HomeScreen} />
+              <Stack.Screen name="Practice" component={PracticeScreen} />
+            </Stack.Navigator>
+          </NavigationContainer>
+          <BrandIntroOverlay />
+        </ProjectProvider>
+      </AuthProvider>
     </SafeAreaProvider>
   );
 }

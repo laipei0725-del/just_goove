@@ -1,8 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useAuth } from '../context/AuthContext';
+import { supabase } from '../services/supabaseClient';
 
 const STORAGE_KEY = '@just-groove/projects-v1';
-const BACKUP_STORAGE_KEY = '@just-groove/projects-v1-last-known-good';
+const STORAGE_PREFIX = '@just-groove/projects-v2:';
 const ProjectContext = createContext(null);
 
 const normalizeProject = (project) => ({
@@ -30,9 +32,15 @@ const normalizeProject = (project) => ({
   bookmarks: project.bookmarks || [],
   recordings: project.recordings || [],
   updatedAt: project.updatedAt || Date.now(),
+  pinned: Boolean(project.pinned),
+  ownerId: project.ownerId || 'guest',
 });
 
 export function ProjectProvider({ children }) {
+  const { user } = useAuth();
+  const ownerId = user?.id || 'guest';
+  const storageKey = `${STORAGE_PREFIX}${ownerId}`;
+  const backupKey = `${storageKey}:last-known-good`;
   const [projects, setProjects] = useState([]);
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState(null);
@@ -41,10 +49,17 @@ export function ProjectProvider({ children }) {
 
   useEffect(() => {
     let active = true;
+    setHydrated(false);
+    setStorageReady(false);
+    setStorageError(null);
+    setProjects([]);
+    lastPersistedValue.current = null;
 
     const loadProjects = async () => {
       try {
-        const value = await AsyncStorage.getItem(STORAGE_KEY);
+        let value = await AsyncStorage.getItem(storageKey);
+        // One-time migration keeps existing local projects visible in guest mode.
+        if (value === null && ownerId === 'guest') value = await AsyncStorage.getItem(STORAGE_KEY);
         if (!active) return;
 
         // An empty key means this is a new installation. A malformed value is
@@ -57,7 +72,13 @@ export function ProjectProvider({ children }) {
           const parsed = JSON.parse(value);
           if (!Array.isArray(parsed)) throw new Error('Project storage is not an array');
           lastPersistedValue.current = value;
-          setProjects(parsed.map(normalizeProject));
+          setProjects(parsed.map((item) => normalizeProject({ ...item, ownerId })));
+        }
+        if (supabase && ownerId !== 'guest') {
+          const { data: remote, error } = await supabase.from('projects').select('*').order('pinned', { ascending: false }).order('updated_at', { ascending: false });
+          if (!error && Array.isArray(remote) && remote.length) {
+            setProjects(remote.map((row) => normalizeProject({ id: row.id, ownerId, title: row.title, source: row.source, coverUri: row.cover_uri, durationMs: row.duration_ms, pinned: row.pinned, ...row.settings, createdAt: row.created_at, updatedAt: row.updated_at })));
+          }
         }
         setStorageReady(true);
       } catch (error) {
@@ -70,7 +91,7 @@ export function ProjectProvider({ children }) {
 
     loadProjects();
     return () => { active = false; };
-  }, []);
+  }, [ownerId, storageKey]);
 
   useEffect(() => {
     if (!hydrated || !storageReady) return undefined;
@@ -83,9 +104,9 @@ export function ProjectProvider({ children }) {
         // Keep the last verified value as a recovery copy before changing the
         // main key. Project media itself is never touched by this operation.
         if (lastPersistedValue.current !== null) {
-          await AsyncStorage.setItem(BACKUP_STORAGE_KEY, lastPersistedValue.current);
+          await AsyncStorage.setItem(backupKey, lastPersistedValue.current);
         }
-        await AsyncStorage.setItem(STORAGE_KEY, nextValue);
+        await AsyncStorage.setItem(storageKey, nextValue);
         if (active) lastPersistedValue.current = nextValue;
       } catch (error) {
         console.warn('JUST GROOVE project storage was not saved.', error);
@@ -94,14 +115,18 @@ export function ProjectProvider({ children }) {
     };
 
     persistProjects();
+    if (supabase && ownerId !== 'guest') {
+      const rows = projects.map((project) => ({ id: project.id, user_id: ownerId, title: project.title, source: project.source || {}, cover_uri: project.coverUri, duration_ms: project.durationMs, pinned: project.pinned, settings: { ...project, source: undefined, coverUri: undefined, durationMs: undefined, title: undefined, id: undefined, ownerId: undefined, pinned: undefined, createdAt: undefined, updatedAt: undefined } }));
+      supabase.from('projects').upsert(rows, { onConflict: 'id' }).then(({ error }) => { if (error) console.warn('JUST GROOVE remote project sync failed', error.message); });
+    }
     return () => { active = false; };
-  }, [hydrated, projects, storageReady]);
+  }, [backupKey, hydrated, ownerId, projects, storageKey, storageReady]);
 
   const addProject = useCallback((input) => {
-    const project = normalizeProject({ ...input, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` });
+    const project = normalizeProject({ ...input, ownerId, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` });
     setProjects((items) => [project, ...items]);
     return project;
-  }, []);
+  }, [ownerId]);
 
   const updateProject = useCallback((id, patch) => {
     setProjects((items) => items.map((item) => item.id === id ? normalizeProject({ ...item, ...patch, updatedAt: Date.now() }) : item));
@@ -117,7 +142,7 @@ export function ProjectProvider({ children }) {
     });
   }, []);
 
-  const value = useMemo(() => ({ projects, hydrated, storageError, addProject, updateProject, deleteProject, duplicateProject }), [projects, hydrated, storageError, addProject, updateProject, deleteProject, duplicateProject]);
+  const value = useMemo(() => ({ projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject }), [projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject]);
   return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
 }
 

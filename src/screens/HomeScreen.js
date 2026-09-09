@@ -7,6 +7,10 @@ import { createVideoPlayer } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProjects } from '../store/ProjectContext';
 import { captureVideoFrameAsync } from '../utils/captureVideoFrame';
+import ProjectMenu from '../components/ProjectMenu';
+import OnboardingOverlay from '../components/OnboardingOverlay';
+import { useAuth } from '../context/AuthContext';
+import AuthModal from '../components/AuthModal';
 
 const C = { bg: '#0D0D0D', card: '#1B1B1B', line: '#2B2B2B', lime: '#C8FF35', text: '#F4F4F2', muted: '#9A9A96' };
 const youtubeId = (value) => value.trim().match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([\w-]{11})/i)?.[1];
@@ -101,10 +105,22 @@ function ProjectCover({ project, onCoverReady }) {
 
 export default function HomeScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { projects, hydrated, storageError, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
+  const { projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
+  const { user, signOut, isGuest, signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [menuProject, setMenuProject] = useState(null);
+  const [renameProject, setRenameProject] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [onboarding, setOnboarding] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    try { if (!globalThis?.localStorage?.getItem(`hasSeenOnboarding:${ownerId}`)) setOnboarding(true); } catch {}
+  }, [hydrated, ownerId]);
 
   const openProject = (project) => navigation.navigate('Practice', { projectId: project.id });
 
@@ -126,15 +142,17 @@ export default function HomeScreen({ navigation }) {
     setYoutubeUrl(''); setYoutubeOpen(false); openProject(project);
   };
 
-  const rename = (project) => Alert.prompt('重新命名', '輸入新的練舞專案名稱', (title) => title?.trim() && updateProject(project.id, { title: title.trim() }), 'plain-text', project.title);
-  const remove = (project) => Alert.alert('刪除練舞專案？', '只會刪除 APP 內的專案資料，不會刪除手機相簿原始影片。', [{ text: '取消', style: 'cancel' }, { text: '刪除', style: 'destructive', onPress: () => deleteProject(project.id) }]);
-  const manage = (project) => Alert.alert(project.title, '選擇專案操作', [{ text: '重新命名', onPress: () => rename(project) }, { text: '複製', onPress: () => duplicateProject(project.id) }, { text: '刪除', style: 'destructive', onPress: () => remove(project) }, { text: '取消', style: 'cancel' }]);
+  const sortedProjects = [...projects].sort((a, b) => Number(b.pinned) - Number(a.pinned) || (b.updatedAt || 0) - (a.updatedAt || 0));
+  const startRename = (project) => { setMenuProject(null); setRenameProject(project); setRenameValue(project.title); };
+  const confirmRename = () => { const title = renameValue.trim(); if (title && renameProject) updateProject(renameProject.id, { title }); setRenameProject(null); };
+  const askDelete = (project) => { setMenuProject(null); setDeleteTarget(project); };
 
   const renderProject = ({ item }) => (
     <Pressable onPress={() => openProject(item)} style={({ pressed }) => [styles.card, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={`開始練習 ${item.title}`}>
       <View style={styles.cover}>
         <ProjectCover project={item} onCoverReady={(coverUri) => updateProject(item.id, { coverUri })} />
-        <Pressable onPress={() => manage(item)} hitSlop={10} style={styles.more} accessibilityLabel={`${item.title} 更多選項`}><Ionicons name="ellipsis-vertical" size={20} color={C.text} /></Pressable>
+        <Pressable onPress={() => setMenuProject(item)} hitSlop={10} style={styles.more} accessibilityLabel={`${item.title} 更多選項`}><Ionicons name="ellipsis-vertical" size={20} color={C.text} /></Pressable>
+        {item.pinned ? <View style={styles.pinBadge}><Ionicons name="pin" size={12} color={C.bg} /></View> : null}
         <View style={styles.sourceBadge}><Ionicons name={item.source?.type === 'youtube' ? 'logo-youtube' : 'phone-portrait-outline'} size={12} color={C.bg} /><Text style={styles.sourceText}>{item.source?.type === 'youtube' ? 'YouTube' : '相簿'}</Text></View>
       </View>
       <Text numberOfLines={2} style={styles.cardTitle}>{item.title}</Text>
@@ -144,13 +162,13 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
-      <View style={styles.header}><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>選一段，開始練。</Text></View><Pressable style={styles.headerButton} onPress={() => Alert.alert('APP 設定', '練舞相關設定會保存在每個專案中。')} accessibilityLabel="APP 設定"><Ionicons name="settings-outline" size={23} color={C.text} /></Pressable></View>
+      <View style={styles.header}><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>{isGuest ? '訪客模式 · 選一段，開始練。' : `嗨，${user?.email?.split('@')[0] || '舞者'} · 選一段，開始練。`}</Text></View><Pressable style={styles.headerButton} onPress={() => isGuest ? setAuthOpen(true) : signOut?.()} accessibilityLabel="帳號設定"><Ionicons name={isGuest ? 'person-outline' : 'person'} size={23} color={C.text} /></Pressable></View>
       <Pressable style={styles.primary} onPress={() => setAddOpen(true)}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
       <View style={styles.recordingHint} accessibilityLabel="錄影功能提示"><Ionicons name="radio-button-on" size={18} color={C.lime} /><View style={{ flex: 1 }}><Text style={styles.recordingHintTitle}>錄影在練舞畫面</Text><Text style={styles.recordingHintText}>開啟專案後，底部工具列會看到「錄影」。目前合成錄影需要桌面版 Chrome。</Text></View></View>
       {storageError ? <View style={styles.storageWarning}><Ionicons name="shield-checkmark-outline" size={18} color={C.lime} /><Text style={styles.storageWarningText}>{storageError}</Text></View> : null}
       <View style={styles.sectionRow}><Text style={styles.sectionTitle}>我的練舞專案</Text><Text style={styles.count}>{projects.length}</Text></View>
       {!hydrated ? <ActivityIndicator color={C.lime} style={{ marginTop: 60 }} /> : (
-        <FlatList data={projects} keyExtractor={(item) => item.id} renderItem={renderProject} numColumns={2} columnWrapperStyle={styles.columns} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} ListEmptyComponent={<View style={styles.empty}><Ionicons name="albums-outline" size={38} color={C.muted} /><Text style={styles.emptyTitle}>還沒有練舞專案</Text><Text style={styles.emptyText}>從手機相簿或 YouTube 加入第一支影片。</Text></View>} />
+        <FlatList data={sortedProjects} keyExtractor={(item) => item.id} renderItem={renderProject} numColumns={2} columnWrapperStyle={styles.columns} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} ListEmptyComponent={<View style={styles.empty}><Ionicons name="albums-outline" size={38} color={C.muted} /><Text style={styles.emptyTitle}>還沒有練舞專案</Text><Text style={styles.emptyText}>從手機相簿或 YouTube 加入第一支影片。</Text></View>} />
       )}
 
       <Modal visible={addOpen} transparent animationType="fade" onRequestClose={() => setAddOpen(false)}><Pressable style={styles.backdrop} onPress={() => setAddOpen(false)}><View style={styles.sheet}><Text style={styles.sheetTitle}>新增練舞專案</Text><Pressable style={styles.option} onPress={importLocal}><Ionicons name="images-outline" size={22} color={C.lime} /><View><Text style={styles.optionTitle}>從手機相簿選擇</Text><Text style={styles.optionText}>使用你已保存的練舞影片</Text></View></Pressable><Pressable style={styles.option} onPress={() => { setAddOpen(false); setYoutubeOpen(true); }}><Ionicons name="logo-youtube" size={22} color="#FF5D5D" /><View><Text style={styles.optionTitle}>加入 YouTube</Text><Text style={styles.optionText}>貼上影片或 Shorts 連結</Text></View></Pressable></View></Pressable></Modal>
@@ -165,6 +183,11 @@ export default function HomeScreen({ navigation }) {
           </Pressable>
         </KeyboardAvoidingView>
       </Modal>
+      <ProjectMenu visible={Boolean(menuProject)} project={menuProject} onClose={() => setMenuProject(null)} onPin={() => { updateProject(menuProject.id, { pinned: !menuProject.pinned }); setMenuProject(null); }} onRename={() => startRename(menuProject)} onDuplicate={() => { duplicateProject(menuProject.id); setMenuProject(null); }} onDelete={() => askDelete(menuProject)} />
+      <Modal visible={Boolean(renameProject)} transparent animationType="fade" onRequestClose={() => setRenameProject(null)}><KeyboardAvoidingView style={styles.centeredBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={styles.dialog}><Text style={styles.sheetTitle}>重新命名專案</Text><TextInput autoFocus value={renameValue} onChangeText={setRenameValue} style={styles.input} placeholder="輸入專案名稱" placeholderTextColor="#69696D" /><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setRenameProject(null)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={confirmRename}><Text style={styles.confirmText}>儲存</Text></Pressable></View></View></KeyboardAvoidingView></Modal>
+      <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={() => setDeleteTarget(null)}><View style={styles.centeredBackdrop}><View style={styles.dialog}><Text style={styles.sheetTitle}>刪除這個專案？</Text><Text style={styles.dialogCopy}>「{deleteTarget?.title}」會從此裝置的專案清單移除，原始相簿影片不會被刪除。</Text><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setDeleteTarget(null)}><Text style={styles.cancelText}>保留</Text></Pressable><Pressable style={styles.dangerConfirm} onPress={() => { deleteProject(deleteTarget.id); setDeleteTarget(null); }}><Text style={styles.confirmText}>刪除</Text></Pressable></View></View></View></Modal>
+      <OnboardingOverlay userId={ownerId} visible={onboarding} onClose={() => setOnboarding(false)} />
+      <AuthModal visible={authOpen} onClose={() => setAuthOpen(false)} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} signInWithGoogle={signInWithGoogle} />
     </View>
   );
 }
@@ -185,4 +208,8 @@ Object.assign(styles, {
   recordingHint: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', borderRadius: 14, backgroundColor: '#20281A', borderWidth: 1, borderColor: '#4B6421', padding: 12, marginBottom: 18 },
   recordingHintTitle: { color: C.text, fontFamily: 'ZenGothic-Bold', fontSize: 12 },
   recordingHintText: { color: C.muted, fontSize: 11, lineHeight: 17, marginTop: 3 },
+  pinBadge: { position: 'absolute', top: 10, left: 10, width: 28, height: 28, borderRadius: 14, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center' },
+  dialog: { width: '100%', maxWidth: 520, backgroundColor: '#1D1D1D', borderRadius: 24, padding: 20, borderWidth: 1, borderColor: '#343434' },
+  dialogCopy: { color: C.muted, fontSize: 13, lineHeight: 20, marginBottom: 4 },
+  dangerConfirm: { flex: 1, minHeight: 50, borderRadius: 16, backgroundColor: '#FF6B6B', alignItems: 'center', justifyContent: 'center' },
 });
