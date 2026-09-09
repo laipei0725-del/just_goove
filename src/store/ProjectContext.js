@@ -77,7 +77,10 @@ export function ProjectProvider({ children }) {
         if (supabase && ownerId !== 'guest') {
           let guestProjects = [];
           try {
-            const guestValue = await AsyncStorage.getItem(`${STORAGE_PREFIX}guest`);
+            // Read both the current guest namespace and the legacy key so
+            // projects created before the cloud-sync release are migrated too.
+            const guestValue = await AsyncStorage.getItem(`${STORAGE_PREFIX}guest`)
+              || await AsyncStorage.getItem(STORAGE_KEY);
             if (guestValue) guestProjects = JSON.parse(guestValue).map((item) => normalizeProject({ ...item, ownerId }));
           } catch (error) { console.warn('JUST GROOVE guest migration skipped', error.message); }
           const { data: remote, error } = await supabase.from('dance_projects').select('*').eq('user_id', ownerId).order('updated_at', { ascending: false });
@@ -88,7 +91,7 @@ export function ProjectProvider({ children }) {
             if (guestProjects.length) {
               const migrationRows = guestProjects.map((project) => ({ id: String(project.id), user_id: ownerId, title: project.title, data: project, updated_at: new Date().toISOString() }));
               await supabase.from('dance_projects').upsert(migrationRows, { onConflict: 'user_id,id' });
-              await AsyncStorage.removeItem(`${STORAGE_PREFIX}guest`);
+              await AsyncStorage.multiRemove([`${STORAGE_PREFIX}guest`, STORAGE_KEY]);
             }
           }
         }
