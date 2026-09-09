@@ -20,5 +20,28 @@ create policy "dance_projects_update_own" on public.dance_projects for update to
 drop policy if exists "dance_projects_delete_own" on public.dance_projects;
 create policy "dance_projects_delete_own" on public.dance_projects for delete to authenticated using ((select auth.uid()) = user_id);
 
--- Create a private bucket in the dashboard named user-videos, then add:
--- storage.foldername(name)[1] = auth.uid() to select/insert/delete policies.
+-- Private media storage. Files must use the path <user_id>/<project_id>/<file>.
+insert into storage.buckets (id, name, public)
+values ('user-videos', 'user-videos', false)
+on conflict (id) do update set public = false;
+
+drop policy if exists "user_videos_select_own" on storage.objects;
+create policy "user_videos_select_own" on storage.objects
+for select to authenticated
+using (bucket_id = 'user-videos' and (storage.foldername(name))[1] = (select auth.uid()::text));
+
+drop policy if exists "user_videos_insert_own" on storage.objects;
+create policy "user_videos_insert_own" on storage.objects
+for insert to authenticated
+with check (bucket_id = 'user-videos' and (storage.foldername(name))[1] = (select auth.uid()::text));
+
+drop policy if exists "user_videos_update_own" on storage.objects;
+create policy "user_videos_update_own" on storage.objects
+for update to authenticated
+using (bucket_id = 'user-videos' and (storage.foldername(name))[1] = (select auth.uid()::text))
+with check (bucket_id = 'user-videos' and (storage.foldername(name))[1] = (select auth.uid()::text));
+
+drop policy if exists "user_videos_delete_own" on storage.objects;
+create policy "user_videos_delete_own" on storage.objects
+for delete to authenticated
+using (bucket_id = 'user-videos' and (storage.foldername(name))[1] = (select auth.uid()::text));
