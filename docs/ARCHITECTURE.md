@@ -16,7 +16,7 @@ npm install @supabase/supabase-js
 cp .env.example .env.local
 ```
 
-在 Supabase 專案設定 URL、anon key，啟用 Google provider，並執行 `supabase/migrations/001_projects.sql`。部署到 Vercel 時將相同兩個 `EXPO_PUBLIC_*` 變數加入 Preview/Production。
+在 Supabase 專案設定 URL、anon key，啟用 Google provider，並執行 `supabase/migrations/001_projects.sql`。migration 建立 `dance_projects`，完整專案物件放在 `data` 欄位。部署到 Vercel 時將相同兩個 `EXPO_PUBLIC_*` 變數加入 Preview/Production。
 
 目前工作區沒有已連結的 Vercel project，因此 Marketplace provisioning 仍需在你的 Vercel 帳號完成。完成後再部署即可讀到環境變數。
 

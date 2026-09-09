@@ -75,9 +75,21 @@ export function ProjectProvider({ children }) {
           setProjects(parsed.map((item) => normalizeProject({ ...item, ownerId })));
         }
         if (supabase && ownerId !== 'guest') {
-          const { data: remote, error } = await supabase.from('projects').select('*').order('pinned', { ascending: false }).order('updated_at', { ascending: false });
-          if (!error && Array.isArray(remote) && remote.length) {
-            setProjects(remote.map((row) => normalizeProject({ id: row.id, ownerId, title: row.title, source: row.source, coverUri: row.cover_uri, durationMs: row.duration_ms, pinned: row.pinned, ...row.settings, createdAt: row.created_at, updatedAt: row.updated_at })));
+          let guestProjects = [];
+          try {
+            const guestValue = await AsyncStorage.getItem(`${STORAGE_PREFIX}guest`);
+            if (guestValue) guestProjects = JSON.parse(guestValue).map((item) => normalizeProject({ ...item, ownerId }));
+          } catch (error) { console.warn('JUST GROOVE guest migration skipped', error.message); }
+          const { data: remote, error } = await supabase.from('dance_projects').select('*').eq('user_id', ownerId).order('updated_at', { ascending: false });
+          if (!error && Array.isArray(remote)) {
+            const remoteProjects = remote.map((row) => normalizeProject({ ...row.data, id: row.id, ownerId, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at }));
+            const merged = [...remoteProjects, ...guestProjects.filter((guest) => !remoteProjects.some((item) => item.id === guest.id))];
+            setProjects(merged);
+            if (guestProjects.length) {
+              const migrationRows = guestProjects.map((project) => ({ id: String(project.id), user_id: ownerId, title: project.title, data: project, updated_at: new Date().toISOString() }));
+              await supabase.from('dance_projects').upsert(migrationRows, { onConflict: 'user_id,id' });
+              await AsyncStorage.removeItem(`${STORAGE_PREFIX}guest`);
+            }
           }
         }
         setStorageReady(true);
@@ -116,8 +128,8 @@ export function ProjectProvider({ children }) {
 
     persistProjects();
     if (supabase && ownerId !== 'guest') {
-      const rows = projects.map((project) => ({ id: project.id, user_id: ownerId, title: project.title, source: project.source || {}, cover_uri: project.coverUri, duration_ms: project.durationMs, pinned: project.pinned, settings: { ...project, source: undefined, coverUri: undefined, durationMs: undefined, title: undefined, id: undefined, ownerId: undefined, pinned: undefined, createdAt: undefined, updatedAt: undefined } }));
-      supabase.from('projects').upsert(rows, { onConflict: 'id' }).then(({ error }) => { if (error) console.warn('JUST GROOVE remote project sync failed', error.message); });
+      const rows = projects.map((project) => ({ id: String(project.id), user_id: ownerId, title: project.title, data: project, updated_at: new Date().toISOString() }));
+      supabase.from('dance_projects').upsert(rows, { onConflict: 'user_id,id' }).then(({ error }) => { if (error) console.warn('JUST GROOVE remote project sync failed', error.message); });
     }
     return () => { active = false; };
   }, [backupKey, hydrated, ownerId, projects, storageKey, storageReady]);
@@ -132,7 +144,10 @@ export function ProjectProvider({ children }) {
     setProjects((items) => items.map((item) => item.id === id ? normalizeProject({ ...item, ...patch, updatedAt: Date.now() }) : item));
   }, []);
 
-  const deleteProject = useCallback((id) => setProjects((items) => items.filter((item) => item.id !== id)), []);
+  const deleteProject = useCallback((id) => {
+    setProjects((items) => items.filter((item) => item.id !== id));
+    if (supabase && ownerId !== 'guest') supabase.from('dance_projects').delete().eq('id', String(id)).eq('user_id', ownerId).then(({ error }) => { if (error) console.warn('JUST GROOVE remote delete failed', error.message); });
+  }, [ownerId]);
   const duplicateProject = useCallback((id) => {
     setProjects((items) => {
       const source = items.find((item) => item.id === id);
