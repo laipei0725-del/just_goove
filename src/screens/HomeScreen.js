@@ -16,6 +16,7 @@ const { extractYouTubeId } = require('../utils/youtubeUrl.cjs');
 
 const C = { bg: '#0D0D0D', card: '#1B1B1B', line: '#2B2B2B', lime: '#C8FF35', text: '#F4F4F2', muted: '#9A9A96' };
 const BRAND_LOGO = require('../../assets/icon.png');
+const AUTH_INTENT_KEY = 'just-groove:auth-intent';
 const thumbnailKeyFor = (project) => project.thumbnailKey || `justgroove-thumbnail-${project.id}`;
 const formatDuration = (durationMs) => {
   if (!Number.isFinite(durationMs) || durationMs < 0) return '--:--';
@@ -118,20 +119,37 @@ export default function HomeScreen({ navigation }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [onboarding, setOnboarding] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
+  const [pendingAdd, setPendingAdd] = useState(false);
 
   useEffect(() => {
     if (!hydrated) return;
     try { if (!globalThis?.localStorage?.getItem(`hasSeenOnboarding:${ownerId}`)) setOnboarding(true); } catch {}
   }, [hydrated, ownerId]);
 
+  useEffect(() => {
+    if (isGuest) return;
+    let shouldOpen = pendingAdd;
+    try { shouldOpen = shouldOpen || globalThis?.sessionStorage?.getItem(AUTH_INTENT_KEY) === 'add-project'; } catch {}
+    if (!shouldOpen) return;
+    try { globalThis?.sessionStorage?.removeItem(AUTH_INTENT_KEY); } catch {}
+    setPendingAdd(false);
+    setAuthOpen(false);
+    setAddOpen(true);
+  }, [isGuest, pendingAdd]);
+
   const openProject = (project) => navigation.navigate('Practice', { projectId: project.id });
 
   const requireAccount = (next) => {
     if (!isGuest) return next();
-    Alert.alert('請先登入以儲存練舞專案', '登入後即可新增影片、同步設定，並在不同裝置接續練習。', [
-      { text: '取消', style: 'cancel' },
-      { text: '立即登入', onPress: () => setAuthOpen(true) },
-    ]);
+    setPendingAdd(true);
+    try { globalThis?.sessionStorage?.setItem(AUTH_INTENT_KEY, 'add-project'); } catch {}
+    setAuthOpen(true);
+  };
+
+  const cancelAuthIntent = () => {
+    setPendingAdd(false);
+    try { globalThis?.sessionStorage?.removeItem(AUTH_INTENT_KEY); } catch {}
+    setAuthOpen(false);
   };
 
   const importLocal = async () => {
@@ -204,7 +222,7 @@ export default function HomeScreen({ navigation }) {
       <Modal visible={Boolean(renameProject)} transparent animationType="fade" onRequestClose={() => setRenameProject(null)}><KeyboardAvoidingView style={styles.centeredBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={styles.dialog}><Text style={styles.sheetTitle}>重新命名專案</Text><TextInput autoFocus value={renameValue} onChangeText={setRenameValue} style={styles.input} placeholder="輸入專案名稱" placeholderTextColor="#69696D" /><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setRenameProject(null)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={confirmRename}><Text style={styles.confirmText}>儲存</Text></Pressable></View></View></KeyboardAvoidingView></Modal>
       <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={() => setDeleteTarget(null)}><View style={styles.centeredBackdrop}><View style={styles.dialog}><Text style={styles.sheetTitle}>刪除這個專案？</Text><Text style={styles.dialogCopy}>「{deleteTarget?.title}」會從此裝置的專案清單移除，原始相簿影片不會被刪除。</Text><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setDeleteTarget(null)}><Text style={styles.cancelText}>保留</Text></Pressable><Pressable style={styles.dangerConfirm} onPress={() => { deleteProject(deleteTarget.id); setDeleteTarget(null); }}><Text style={styles.confirmText}>刪除</Text></Pressable></View></View></View></Modal>
       <OnboardingOverlay userId={ownerId} visible={onboarding} onClose={() => setOnboarding(false)} />
-      <AuthModal visible={authOpen} onClose={() => setAuthOpen(false)} onContinueGuest={() => setAuthOpen(false)} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} signInWithGoogle={signInWithGoogle} />
+      <AuthModal visible={authOpen} contextMessage={pendingAdd ? '請先登入以儲存練舞專案，登入後會接著讓你選擇相簿或 YouTube。' : undefined} onClose={cancelAuthIntent} onAuthenticated={() => setAuthOpen(false)} onContinueGuest={cancelAuthIntent} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} signInWithGoogle={signInWithGoogle} />
     </View>
   );
 }
