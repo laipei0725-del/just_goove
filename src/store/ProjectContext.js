@@ -39,6 +39,13 @@ const normalizeProject = (project) => ({
   ownerId: project.ownerId || 'guest',
 });
 
+const readableSyncError = (error, fallback = '同步失敗，請重試。') => {
+  const message = String(error?.message || error || '');
+  if (/bucket not found|nosuchbucket|user-videos/i.test(message)) return '雲端影片空間尚未建立，請先在 Supabase 執行 001_projects.sql 後再重新同步。';
+  if (/failed to fetch|networkerror|load failed|fetch failed/i.test(message)) return '雲端連線失敗，請確認網路、Supabase 網址與 Storage 設定後再重新同步。';
+  return message || fallback;
+};
+
 export function ProjectProvider({ children }) {
   const { user, ready } = useAuth();
   return <OwnerProjects key={user?.id || 'guest'} ownerId={user?.id || 'guest'} authReady={ready}>{children}</OwnerProjects>;
@@ -99,8 +106,8 @@ function OwnerProjects({ children, ownerId, authReady }) {
         }
         setStorageError(null);
         await persist();
-      } catch {
-        if (active) setStorageError(cloud ? '雲端專案暫時無法載入；本機資料已保留，請重試。' : '本機資料無法讀取，請勿清除瀏覽器資料。');
+      } catch (error) {
+        if (active) setStorageError(cloud ? readableSyncError(error, '雲端專案暫時無法載入；本機資料已保留，請重試。') : '本機資料無法讀取，請勿清除瀏覽器資料。');
       } finally {
         if (active) { setHydrated(true); setRevision((n) => n + 1); }
       }
@@ -136,7 +143,7 @@ function OwnerProjects({ children, ownerId, authReady }) {
             await persist();
             setStorageError(null);
           } catch (error) {
-            if (mounted.current) { setStorageError(error.message || '同步失敗，請重試。'); setSyncStatus('尚未同步完成'); }
+            if (mounted.current) { setStorageError(readableSyncError(error)); setSyncStatus('尚未同步完成'); }
             return;
           }
         }
@@ -144,7 +151,7 @@ function OwnerProjects({ children, ownerId, authReady }) {
           setSyncStatus(dirty.current.size ? '尚有變更待同步' : '已同步到雲端');
           if (dirty.current.size) setRevision((n) => n + 1);
         }
-      }).catch(() => { if (mounted.current) setStorageError('同步失敗，請重試。'); });
+      }).catch((error) => { if (mounted.current) setStorageError(readableSyncError(error)); });
     }, 600);
     return () => clearTimeout(timer);
   }, [revision, hydrated, cloud, ownerId, enqueue, persist, publish]);
