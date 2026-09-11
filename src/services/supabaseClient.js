@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL;
+// Accept a pasted REST endpoint too, but normalize it to the project root
+// expected by createClient.
+const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim().replace(/\/rest\/v1\/?$/, '');
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
 
 // Build-safe: the app keeps working in local guest mode until Supabase env vars
