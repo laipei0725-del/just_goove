@@ -37,7 +37,6 @@ export function AuthProvider({ children }) {
     isGuest: !session,
     signInWithEmail: (email, password) => supabase ? supabase.auth.signInWithPassword({ email, password }) : Promise.resolve(unavailable),
     signUpWithEmail,
-    signInWithGoogle: () => supabase ? supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined } }) : Promise.resolve(unavailable),
     signOut: () => supabase ? supabase.auth.signOut() : Promise.resolve({}),
   }), [ready, session]);
 

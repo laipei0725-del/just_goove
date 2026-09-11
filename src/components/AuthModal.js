@@ -15,7 +15,7 @@ const friendlyAuthError = (error) => {
   return error?.message || '認證服務暫時無法使用，請稍後再試。';
 };
 
-export default function AuthModal({ visible, onClose, onAuthenticated, contextMessage, signInWithEmail, signUpWithEmail, signInWithGoogle, onContinueGuest }) {
+export default function AuthModal({ visible, onClose, onAuthenticated, contextMessage, signInWithEmail, signUpWithEmail, onContinueGuest }) {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -67,15 +67,6 @@ export default function AuthModal({ visible, onClose, onAuthenticated, contextMe
     setConfirmPassword('');
   };
 
-  const google = async () => {
-    setBusy(true); setMessage(''); setSuccess(false);
-    try {
-      const result = await signInWithGoogle?.();
-      if (result?.error) setMessage(friendlyAuthError(result.error));
-    } catch (error) { setMessage(friendlyAuthError(error)); }
-    finally { setBusy(false); }
-  };
-
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -92,7 +83,6 @@ export default function AuthModal({ visible, onClose, onAuthenticated, contextMe
             {mode === 'signUp' ? <TextInput value={confirmPassword} onChangeText={setConfirmPassword} placeholder="再次輸入密碼" placeholderTextColor="#69696D" secureTextEntry autoComplete="new-password" style={styles.input} /> : null}
             <Text accessibilityRole={message ? 'alert' : undefined} maxFontSizeMultiplier={1.25} style={[styles.message, success && styles.success]}>{message}</Text>
             <Pressable style={({ pressed }) => [styles.primary, pressed && styles.pressed]} onPress={submit} disabled={busy}><Text numberOfLines={1} maxFontSizeMultiplier={1.2} style={styles.primaryText}>{busy ? '處理中…' : mode === 'signIn' ? 'Email 登入' : '建立帳號'}</Text></Pressable>
-            <Pressable style={({ pressed }) => [styles.google, pressed && styles.pressed]} onPress={google} disabled={busy}><Ionicons name="logo-google" size={18} color={C.text} /><Text style={styles.googleText}>使用 Google 一鍵登入</Text></Pressable>
             <Pressable onPress={switchMode}><Text maxFontSizeMultiplier={1.2} style={styles.switch}>{mode === 'signIn' ? '第一次使用？建立帳號' : '已有帳號？返回登入'}</Text></Pressable>
             <Pressable style={styles.guest} onPress={onContinueGuest}><Text maxFontSizeMultiplier={1.2} style={styles.guestText}>先以訪客模式使用</Text></Pressable>
             <Text maxFontSizeMultiplier={1.2} style={styles.note}>登入後會同步專案與影片設定；訪客資料只保存在此裝置。</Text>
@@ -120,8 +110,6 @@ const styles = StyleSheet.create({
   primary: { minHeight: 52, borderRadius: 15, backgroundColor: C.lime, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12, marginTop: 8 },
   pressed: { opacity: 0.8 },
   primaryText: { color: '#0D0D0D', fontWeight: '800', fontSize: 14 },
-  google: { minHeight: 52, borderRadius: 15, borderWidth: 1, borderColor: '#4A4A4A', flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
-  googleText: { color: C.text, fontWeight: '700' },
   switch: { color: C.lime, textAlign: 'center', marginTop: 18, fontSize: 13, lineHeight: 20 },
   guest: { minHeight: 44, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
   guestText: { color: C.muted, fontSize: 12 },
