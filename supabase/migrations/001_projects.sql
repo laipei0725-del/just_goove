@@ -10,6 +10,7 @@ create table if not exists public.dance_projects (
 
 create index if not exists dance_projects_user_updated_idx on public.dance_projects(user_id, updated_at desc);
 alter table public.dance_projects enable row level security;
+grant select, insert, update, delete on public.dance_projects to authenticated;
 
 drop policy if exists "dance_projects_select_own" on public.dance_projects;
 create policy "dance_projects_select_own" on public.dance_projects for select to authenticated using ((select auth.uid()) = user_id);
