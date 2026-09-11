@@ -13,7 +13,7 @@ import YoutubePlayer from 'react-native-youtube-iframe';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useProjects } from '../store/ProjectContext';
 import RangeEditor from '../components/RangeEditor';
-import { startOriginalVideoRecording } from '../utils/browserTabRecorder';
+import { startCleanPracticeRecording } from '../utils/browserTabRecorder';
 const { clamp, playbackBounds, preciseTime } = require('../utils/practiceRange.cjs');
 const { getAspectFitSize } = require('../utils/youtubeLayout.cjs');
 const { extractYouTubeId } = require('../utils/youtubeUrl.cjs');
@@ -590,6 +590,21 @@ export default function PracticeScreen({ route, navigation }) {
     setNotice('影片已下載到本機。');
   };
 
+  const findPracticeVideoElement = (selector) => {
+    const root = document.getElementById(selector);
+    if (root?.tagName === 'VIDEO') return root;
+    return root?.querySelector?.('video') || null;
+  };
+  const waitForPracticeVideoElement = async (selector, timeoutMs = 2200) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const element = findPracticeVideoElement(selector);
+      if (element?.readyState >= 2 || element?.srcObject) return element;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    return findPracticeVideoElement(selector);
+  };
+
   const beginRecording = async () => {
     if (Platform.OS === 'web') {
       const canCaptureTab = typeof navigator !== 'undefined'
@@ -608,7 +623,7 @@ export default function PracticeScreen({ route, navigation }) {
         await new Promise((resolve) => setTimeout(resolve, 900));
       }
       setControlsVisible(false);
-      setNotice('請在 Chrome 選擇「目前分頁」，並勾選分享分頁音訊。');
+      setNotice('正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
       setCountdown(3);
       for (let value = 3; value > 0; value -= 1) {
         setCountdown(value);
@@ -616,20 +631,32 @@ export default function PracticeScreen({ route, navigation }) {
       }
       setCountdown(null);
       try {
-        setPlaying(true);
-        await new Promise((resolve) => setTimeout(resolve, 180));
-        const sourceVideo = document.getElementById('practice-source-video')
-          || document.querySelector('#practice-source-video video')
-          || document.querySelector('video');
-        browserRecorderRef.current = await startOriginalVideoRecording({
-          videoElement: sourceVideo,
+        const sourceVideo = findPracticeVideoElement('practice-source-video') || document.querySelector('video');
+        const cameraVideo = await waitForPracticeVideoElement('practice-camera-video');
+        const startAt = 0;
+        const videoEnd = Number.isFinite(total) && total > startAt ? total : sourceVideo.duration;
+        const endAt = Number.isFinite(project?.trimEnd) && project.trimEnd > startAt ? project.trimEnd : videoEnd;
+        seek(startAt, true);
+        setPlaying(false);
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        browserRecorderRef.current = await startCleanPracticeRecording({
+          sourceVideo,
+          cameraVideo,
+          aspectRatio: project.aspectRatio,
+          crop: project.crop,
+          cameraMode,
+          mirrored,
+          startAt,
+          endAt,
+          playbackRate: speed,
+          includeCamera: true,
           onStopped: (result) => {
             browserRecorderRef.current = null;
             setRecording(false);
             setControlsVisible(true);
             finishBrowserRecording(result);
           },
-          onError: () => { setNotice('原影片錄製失敗，請重新播放影片後再試。'); setRecording(false); setControlsVisible(true); },
+          onError: () => { setNotice('合成錄影失敗，請確認影片與相機已載入後再試。'); setRecording(false); setControlsVisible(true); },
         });
         setRecordSeconds(0);
         setRecording(true);
@@ -727,7 +754,11 @@ export default function PracticeScreen({ route, navigation }) {
   if (!project) return null;
 
   const videoFit = project.crop === 'cover' ? 'cover' : 'contain';
-  const cameraStyle = cameraMode === 'split' ? styles.cameraSplit : cameraMode === 'overlay' ? styles.cameraOverlay : styles.cameraPip;
+  const practiceAspectRatio = project.aspectRatio === '16:9' ? 16 / 9 : project.aspectRatio === '1:1' ? 1 : 9 / 16;
+  const cameraPipAspectStyle = cameraMode === 'pip'
+    ? (practiceAspectRatio >= 1 ? { width: 168, height: 95 } : { width: 118, height: 210 })
+    : null;
+  const cameraStyle = cameraMode === 'split' ? styles.cameraSplit : cameraMode === 'overlay' ? styles.cameraOverlay : [styles.cameraPip, cameraPipAspectStyle];
   const stageHeight = Math.max(220, height - insets.top - insets.bottom - (fullscreen ? 0 : 72));
   const youtubeAspectRatio = project.aspectRatio === '1:1' ? 1 : isVerticalYoutube ? 9 / 16 : 16 / 9;
   const fallbackYoutubeWidth = Math.max(1, width - (immersiveYoutube ? insets.left + insets.right : 24));
@@ -760,7 +791,7 @@ export default function PracticeScreen({ route, navigation }) {
           {source?.type === 'local' ? <VideoView ref={videoRef} player={player} style={styles.fill} contentFit={videoFit} nativeControls={false} nativeID="practice-source-video" playsInline fullscreenOptions={{ enable: false }} surfaceType="textureView" /> : (!youtubeVideoId ? <View style={styles.invalidVideo}><Ionicons name="warning-outline" size={34} color={C.danger} /><Text style={styles.invalidVideoTitle}>YouTube 連結無效</Text><Text style={styles.invalidVideoText}>返回首頁並重新加入正確的影片連結。</Text></View> : Platform.OS === 'web' ? <YouTubePlayerWeb mirrored={mirrored} ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={youtubeVideoId} playbackRate={requestedSpeed} onReady={handleYoutubeReady} onPlaybackRateChange={handleRateChange} onStateChange={handleYoutubeStateChange} onError={() => { setYoutubeReady(false); setNotice("YouTube 無法載入，請確認影片允許嵌入播放。"); }} /> : <YoutubePlayer ref={ytRef} height={youtubeFrame.height} width={youtubeFrame.width} play={playing} videoId={youtubeVideoId} playbackRate={requestedSpeed} initialPlayerParams={YOUTUBE_PLAYER_PARAMS} webViewProps={YOUTUBE_WEBVIEW_PROPS} onReady={handleYoutubeReady} onPlaybackRateChange={handleRateChange} onChangeState={handleYoutubeStateChange} onError={() => { setYoutubeReady(false); setNotice("YouTube 無法載入，請確認影片允許嵌入播放。"); }} />)}
         </View>
         {isYoutube && <Pressable style={[styles.youtubeTapTarget, { bottom: youtubeViewportBottom }]} onPress={toggleYoutubeControls} accessibilityLabel={controlsVisible ? '隱藏播放控制' : '顯示播放控制'} />}
-        {cameraVisible && <View style={[styles.camera, cameraStyle]}><CameraView ref={cameraRef} style={styles.fill} facing="front" mirror mode="video" active={cameraVisible} onCameraReady={() => { cameraReadyRef.current = true; setCameraReady(true); }} onMountError={(event) => { cameraReadyRef.current = false; setCameraReady(false); Alert.alert('相機啟動失敗', event.message); }} /><View style={styles.liveBadge}><Text style={styles.liveText}>{recording ? `REC ${time(recordSeconds)}` : cameraReady ? 'LIVE' : '準備中'}</Text></View></View>}
+        {cameraVisible && <View style={[styles.camera, cameraStyle]} nativeID="practice-camera-video"><CameraView ref={cameraRef} style={styles.fill} facing="front" mirror mode="video" active={cameraVisible} onCameraReady={() => { cameraReadyRef.current = true; setCameraReady(true); }} onMountError={(event) => { cameraReadyRef.current = false; setCameraReady(false); Alert.alert('相機啟動失敗', event.message); }} /><View style={styles.liveBadge}><Text style={styles.liveText}>{recording ? `REC ${time(recordSeconds)}` : cameraReady ? 'LIVE' : '準備中'}</Text></View></View>}
         {countdown != null && <View style={styles.countdown}><Text style={styles.countdownText}>{countdown}</Text></View>}
         {controlsShown && <View style={styles.sideTools}>
           <Pressable style={[styles.roundTool, mirrored && styles.activeTool]} onPress={() => { keepYoutubeControlsVisible(true); setMirrored((value) => { updateProject(project.id, { mirrored: !value }); return !value; }); }} accessibilityLabel="鏡像"><Ionicons name="swap-horizontal" size={21} color={mirrored ? C.bg : C.text} /></Pressable>
@@ -781,8 +812,8 @@ export default function PracticeScreen({ route, navigation }) {
 
       <Modal visible={Boolean(recordingResult)} transparent animationType="fade" onRequestClose={() => setRecordingResult(null)}>
         <View style={styles.recordingModalBackdrop}><View style={styles.recordingModal}>
-          <Text style={styles.recordingModalTitle}>原影片錄製完成</Text>
-          <Text style={styles.recordingModalText}>已排除 App 框線與相機畫面，共 {time(recordingResult?.duration || 0)}。</Text>
+          <Text style={styles.recordingModalTitle}>練習影片錄製完成</Text>
+          <Text style={styles.recordingModalText}>已排除 App 按鈕與框線，共 {time(recordingResult?.duration || 0)}。</Text>
           <View style={styles.recordingModalActions}><Pressable style={styles.secondaryAction} onPress={() => setRecordingResult(null)}><Text style={styles.actionText}>關閉</Text></Pressable><Pressable style={styles.primaryAction} onPress={downloadRecording}><Text style={styles.primaryText}>下載影片</Text></Pressable></View>
         </View></View>
       </Modal>
