@@ -606,6 +606,44 @@ export default function PracticeScreen({ route, navigation }) {
     return findPracticeVideoElement(selector);
   };
 
+  const preparePlaybackForBrowserRecording = async (startAt, sourceVideo) => {
+    setPlaying(false);
+    if (source?.type === 'youtube') {
+      try {
+        ytRef.current?.pauseVideo?.();
+        ytRef.current?.seekTo?.(startAt, true);
+      } catch {}
+      setYtPosition(startAt);
+    } else if (sourceVideo) {
+      try {
+        sourceVideo.pause?.();
+        sourceVideo.currentTime = startAt;
+        sourceVideo.playbackRate = Number.isFinite(speed) && speed > 0 ? speed : 1;
+      } catch {}
+    } else {
+      seek(startAt, true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    setPlaying(true);
+    if (source?.type === 'youtube') {
+      try { ytRef.current?.playVideo?.(); } catch {}
+    } else if (sourceVideo) {
+      try { await sourceVideo.play?.(); } catch {}
+    } else {
+      seek(startAt, true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  };
+
+  const pausePracticePlayback = () => {
+    setPlaying(false);
+    if (source?.type === 'youtube') {
+      try { ytRef.current?.pauseVideo?.(); } catch {}
+    } else {
+      try { player.pause?.(); } catch {}
+    }
+  };
+
   const beginRecording = async () => {
     if (Platform.OS === 'web') {
       const canRecordCanvas = typeof navigator !== 'undefined'
@@ -616,15 +654,19 @@ export default function PracticeScreen({ route, navigation }) {
         return;
       }
       if (recordingContent !== 'camera' && source?.type !== 'local') {
-        setNotice('乾淨原影片錄影目前先支援匯入影片；YouTube 受跨來源限制，請先下載影片後匯入。');
+        setNotice('YouTube 先支援「只錄我的相機」；影片＋我的相機受跨來源限制，請先下載影片後匯入。');
+        return;
+      }
+      if (source?.type === 'youtube' && !youtubeReady) {
+        setNotice('YouTube 尚未載入完成，請等影片可播放後再錄影。');
         return;
       }
       if (!cameraVisible) {
         await toggleCamera();
-        await new Promise((resolve) => setTimeout(resolve, 900));
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
       setControlsVisible(false);
-      setNotice(recordingContent === 'camera' ? '正在準備只錄我的相機畫面。' : '正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
+      setNotice(recordingContent === 'camera' ? '正在準備只錄我的相機畫面，影片會同步從頭播放。' : '正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
       setCountdown(3);
       for (let value = 3; value > 0; value -= 1) {
         setCountdown(value);
@@ -632,22 +674,15 @@ export default function PracticeScreen({ route, navigation }) {
       }
       setCountdown(null);
       try {
-        const sourceVideo = findPracticeVideoElement('practice-source-video') || document.querySelector('video');
+        const sourceVideo = source?.type === 'local' ? findPracticeVideoElement('practice-source-video') : null;
         const cameraVideo = await waitForPracticeVideoElement('practice-camera-video');
+        if (!cameraVideo) throw new Error('相機尚未準備好，請允許相機權限後再試。');
         const startAt = 0;
         const videoEnd = Number.isFinite(total) && total > startAt ? total : sourceVideo?.duration;
         const endAt = Number.isFinite(project?.trimEnd) && project.trimEnd > startAt ? project.trimEnd : videoEnd;
-        setPlaying(false);
-        seek(startAt, true);
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        setPlaying(true);
-        if (recordingContent === 'camera' && source?.type === 'local' && sourceVideo) {
-          sourceVideo.currentTime = startAt;
-          sourceVideo.playbackRate = Number.isFinite(speed) && speed > 0 ? speed : 1;
-          sourceVideo.play?.().catch?.(() => {});
-        }
+        await preparePlaybackForBrowserRecording(startAt, sourceVideo);
         browserRecorderRef.current = await startCleanPracticeRecording({
-          sourceVideo,
+          sourceVideo: recordingContent === 'camera' ? null : sourceVideo,
           cameraVideo,
           aspectRatio: project.aspectRatio,
           crop: project.crop,
@@ -663,13 +698,15 @@ export default function PracticeScreen({ route, navigation }) {
             browserRecorderRef.current = null;
             setRecording(false);
             setControlsVisible(true);
+            pausePracticePlayback();
             finishBrowserRecording(result);
           },
-          onError: () => { setNotice('錄影失敗，請確認影片與相機已載入後再試。'); setRecording(false); setControlsVisible(true); },
+          onError: () => { pausePracticePlayback(); setNotice('錄影失敗，請確認影片與相機已載入後再試。'); setRecording(false); setControlsVisible(true); },
         });
         setRecordSeconds(0);
         setRecording(true);
       } catch (error) {
+        pausePracticePlayback();
         setCountdown(null); setControlsVisible(true);
         setNotice(error?.message || 'Chrome 未允許目前分頁的畫面與音訊錄製。');
       }
