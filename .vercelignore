@@ -1,7 +1,13 @@
 .claude/
+.git/
+.expo/
+.playwright-mcp/
+node_modules/
 build/
 capacitor-app/
+ios/
 prototypes/
+remotion-logo/
 design-sketch-source.png
 App Stretch on _ design app.jpeg
 JUST_GROOVE_spec.md
