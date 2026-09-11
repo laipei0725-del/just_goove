@@ -10,19 +10,19 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     if (!supabase) return undefined;
     let active = true;
-    supabase.auth.getSession().then(({ data }) => { if (active) { setSession(data.session); setReady(true); } });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
+    supabase.auth.getSession().then(({ data }) => { if (active) { setSession(data.session); setReady(true); } }).catch(() => { if (active) setReady(true); });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, next) => { if (active) { setSession(next); setReady(true); } });
     return () => { active = false; listener?.subscription?.unsubscribe(); };
   }, []);
 
-  const unavailable = { error: { message: '尚未設定 Supabase，請先填入 EXPO_PUBLIC_SUPABASE_URL 與 EXPO_PUBLIC_SUPABASE_ANON_KEY。' } };
+  const unavailable = { error: { message: '帳號服務尚未就緒，請稍後再試；訪客資料仍保留在此裝置。' } };
   const signUpWithEmail = async (username, email, password) => {
     if (!supabase) return unavailable;
     try {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { username, display_name: username } },
+        options: { data: { username, display_name: username }, emailRedirectTo: typeof window !== 'undefined' ? window.location.origin : undefined },
       });
       return { data, error };
     } catch (error) {

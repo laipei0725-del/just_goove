@@ -4,6 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 // expected by createClient.
 const url = process.env.EXPO_PUBLIC_SUPABASE_URL?.trim().replace(/\/rest\/v1\/?$/, '');
 const anonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+export const supabaseUrl = url;
 
 // Build-safe: the app keeps working in local guest mode until Supabase env vars
 // are configured in Vercel/Expo.

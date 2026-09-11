@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../services/supabaseClient';
+import { createCloudProjects } from '../services/cloudProjects.mjs';
+import { uploadCloudVideo } from '../services/cloudUpload';
 
 const STORAGE_KEY = '@just-groove/projects-v1';
 const STORAGE_PREFIX = '@just-groove/projects-v2:';
@@ -37,131 +39,174 @@ const normalizeProject = (project) => ({
 });
 
 export function ProjectProvider({ children }) {
-  const { user } = useAuth();
-  const ownerId = user?.id || 'guest';
+  const { user, ready } = useAuth();
+  return <OwnerProjects key={user?.id || 'guest'} ownerId={user?.id || 'guest'} authReady={ready}>{children}</OwnerProjects>;
+}
+
+function OwnerProjects({ children, ownerId, authReady }) {
   const storageKey = `${STORAGE_PREFIX}${ownerId}`;
-  const backupKey = `${storageKey}:last-known-good`;
+  const cloud = useMemo(() => supabase && ownerId !== 'guest' ? createCloudProjects(supabase, uploadCloudVideo) : null, [ownerId]);
   const [projects, setProjects] = useState([]);
   const [hydrated, setHydrated] = useState(false);
   const [storageError, setStorageError] = useState(null);
-  const [storageReady, setStorageReady] = useState(false);
-  const lastPersistedValue = useRef(null);
+  const [syncStatus, setSyncStatus] = useState('');
+  const [revision, setRevision] = useState(0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const items = useRef([]);
+  const dirty = useRef(new Set());
+  const mounted = useRef(true);
+  const chain = useRef(Promise.resolve());
+  const cacheChain = useRef(Promise.resolve());
+  const deleting = useRef(new Set());
+  const cloudReady = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const publish = useCallback((next) => { items.current = next; setProjects(next); }, []);
+  const enqueue = useCallback((work) => {
+    const next = chain.current.catch(() => {}).then(work);
+    chain.current = next;
+    return next;
+  }, []);
+  const persist = useCallback(() => {
+    const value = JSON.stringify({ projects: items.current, dirtyIds: [...dirty.current] });
+    cacheChain.current = cacheChain.current.catch(() => {}).then(() => AsyncStorage.setItem(storageKey, value));
+    return cacheChain.current;
+  }, [storageKey]);
 
   useEffect(() => {
+    if (!authReady) return undefined;
     let active = true;
     setHydrated(false);
-    setStorageReady(false);
-    setStorageError(null);
-    setProjects([]);
-    lastPersistedValue.current = null;
-
-    const loadProjects = async () => {
+    const load = async () => {
       try {
-        let value = await AsyncStorage.getItem(storageKey);
-        // One-time migration keeps existing local projects visible in guest mode.
-        if (value === null && ownerId === 'guest') value = await AsyncStorage.getItem(STORAGE_KEY);
+        let raw = await AsyncStorage.getItem(storageKey);
+        // Legacy projects stay exclusively in the guest namespace.
+        if (raw === null && ownerId === 'guest') raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        const local = Array.isArray(parsed) ? parsed : parsed.projects;
+        if (!Array.isArray(local)) throw new Error('Invalid local projects');
+        const pending = new Set(Array.isArray(parsed.dirtyIds) ? parsed.dirtyIds : []);
         if (!active) return;
-
-        // An empty key means this is a new installation. A malformed value is
-        // different: never replace it with an empty list, because that would
-        // erase an existing user's projects after a transient read failure.
-        if (value === null) {
-          lastPersistedValue.current = JSON.stringify([]);
-          setProjects([]);
-        } else {
-          const parsed = JSON.parse(value);
-          if (!Array.isArray(parsed)) throw new Error('Project storage is not an array');
-          lastPersistedValue.current = value;
-          setProjects(parsed.map((item) => normalizeProject({ ...item, ownerId })));
+        dirty.current = pending;
+        publish(local.map((p) => normalizeProject({ ...p, ownerId })));
+        if (cloud) {
+          const remote = await cloud.load(ownerId);
+          if (!active) return;
+          const map = new Map(remote.map((p) => [p.id, normalizeProject(p)]));
+          local.filter((p) => pending.has(p.id)).forEach((p) => map.set(p.id, normalizeProject({ ...p, ownerId })));
+          publish([...map.values()]);
+          cloudReady.current = true;
         }
-        if (supabase && ownerId !== 'guest') {
-          let guestProjects = [];
-          try {
-            // Read both the current guest namespace and the legacy key so
-            // projects created before the cloud-sync release are migrated too.
-            const guestValue = await AsyncStorage.getItem(`${STORAGE_PREFIX}guest`)
-              || await AsyncStorage.getItem(STORAGE_KEY);
-            if (guestValue) guestProjects = JSON.parse(guestValue).map((item) => normalizeProject({ ...item, ownerId }));
-          } catch (error) { console.warn('JUST GROOVE guest migration skipped', error.message); }
-          const { data: remote, error } = await supabase.from('dance_projects').select('*').eq('user_id', ownerId).order('updated_at', { ascending: false });
-          if (!error && Array.isArray(remote)) {
-            const remoteProjects = remote.map((row) => normalizeProject({ ...row.data, id: row.id, ownerId, title: row.title, createdAt: row.created_at, updatedAt: row.updated_at }));
-            const merged = [...remoteProjects, ...guestProjects.filter((guest) => !remoteProjects.some((item) => item.id === guest.id))];
-            setProjects(merged);
-            if (guestProjects.length) {
-              const migrationRows = guestProjects.map((project) => ({ id: String(project.id), user_id: ownerId, title: project.title, data: project, updated_at: new Date().toISOString() }));
-              await supabase.from('dance_projects').upsert(migrationRows, { onConflict: 'user_id,id' });
-              await AsyncStorage.multiRemove([`${STORAGE_PREFIX}guest`, STORAGE_KEY]);
-            }
-          }
-        }
-        setStorageReady(true);
-      } catch (error) {
-        console.warn('JUST GROOVE project storage was not loaded; preserving existing data.', error);
-        if (active) setStorageError('練舞專案暫時無法讀取。為保護既有資料，APP 不會覆寫或清除你的專案。');
+        setStorageError(null);
+        await persist();
+      } catch {
+        if (active) setStorageError(cloud ? '雲端專案暫時無法載入；本機資料已保留，請重試。' : '本機資料無法讀取，請勿清除瀏覽器資料。');
       } finally {
-        if (active) setHydrated(true);
+        if (active) { setHydrated(true); setRevision((n) => n + 1); }
       }
     };
-
-    loadProjects();
+    load();
     return () => { active = false; };
-  }, [ownerId, storageKey]);
+  }, [authReady, cloud, ownerId, storageKey, loadAttempt, publish, persist]);
 
   useEffect(() => {
-    if (!hydrated || !storageReady) return undefined;
-    const nextValue = JSON.stringify(projects);
-    if (nextValue === lastPersistedValue.current) return undefined;
-
-    let active = true;
-    const persistProjects = async () => {
-      try {
-        // Keep the last verified value as a recovery copy before changing the
-        // main key. Project media itself is never touched by this operation.
-        if (lastPersistedValue.current !== null) {
-          await AsyncStorage.setItem(backupKey, lastPersistedValue.current);
+    if (!hydrated || !cloud || !cloudReady.current || !dirty.current.size) return undefined;
+    const timer = setTimeout(() => {
+      enqueue(async () => {
+        if (!mounted.current) return;
+        for (const id of [...dirty.current]) {
+          if (deleting.current.has(id)) continue;
+          const snapshot = items.current.find((p) => p.id === id);
+          if (!snapshot) continue;
+          try {
+            setSyncStatus('正在同步影片與設定…');
+            const saved = await cloud.save(snapshot, ownerId, (percent) => {
+              if (mounted.current) setSyncStatus(`影片上傳中 ${percent}% · 完成前請保留此頁`);
+            });
+            if (!mounted.current) return;
+            const current = items.current.find((p) => p.id === id);
+            if (!current) continue;
+            const unchanged = JSON.stringify(current) === JSON.stringify(snapshot);
+            const recordings = current.recordings.map((r) => {
+              const uploaded = saved.recordings.find((s) => s.id === r.id);
+              return uploaded ? { ...r, storagePath: uploaded.storagePath } : r;
+            });
+            publish(items.current.map((p) => p.id === id ? { ...p, source: { ...p.source, storagePath: saved.source?.storagePath }, recordings } : p));
+            if (unchanged) dirty.current.delete(id);
+            await persist();
+            setStorageError(null);
+          } catch (error) {
+            if (mounted.current) { setStorageError(error.message || '同步失敗，請重試。'); setSyncStatus('尚未同步完成'); }
+            return;
+          }
         }
-        await AsyncStorage.setItem(storageKey, nextValue);
-        if (active) lastPersistedValue.current = nextValue;
-      } catch (error) {
-        console.warn('JUST GROOVE project storage was not saved.', error);
-        if (active) setStorageError('新的變更暫時無法儲存；既有專案資料沒有被刪除。');
-      }
-    };
+        if (mounted.current) {
+          setSyncStatus(dirty.current.size ? '尚有變更待同步' : '已同步到雲端');
+          if (dirty.current.size) setRevision((n) => n + 1);
+        }
+      }).catch(() => { if (mounted.current) setStorageError('同步失敗，請重試。'); });
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [revision, hydrated, cloud, ownerId, enqueue, persist, publish]);
 
-    persistProjects();
-    if (supabase && ownerId !== 'guest') {
-      const rows = projects.map((project) => ({ id: String(project.id), user_id: ownerId, title: project.title, data: project, updated_at: new Date().toISOString() }));
-      supabase.from('dance_projects').upsert(rows, { onConflict: 'user_id,id' }).then(({ error }) => { if (error) console.warn('JUST GROOVE remote project sync failed', error.message); });
-    }
-    return () => { active = false; };
-  }, [backupKey, hydrated, ownerId, projects, storageKey, storageReady]);
-
-  const addProject = useCallback((input) => {
-    const project = normalizeProject({ ...input, ownerId, id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}` });
-    setProjects((items) => [project, ...items]);
-    return project;
-  }, [ownerId]);
-
-  const updateProject = useCallback((id, patch) => {
-    setProjects((items) => items.map((item) => item.id === id ? normalizeProject({ ...item, ...patch, updatedAt: Date.now() }) : item));
-  }, []);
-
-  const deleteProject = useCallback((id) => {
-    setProjects((items) => items.filter((item) => item.id !== id));
-    if (supabase && ownerId !== 'guest') supabase.from('dance_projects').delete().eq('id', String(id)).eq('user_id', ownerId).then(({ error }) => { if (error) console.warn('JUST GROOVE remote delete failed', error.message); });
-  }, [ownerId]);
-  const duplicateProject = useCallback((id) => {
-    setProjects((items) => {
-      const source = items.find((item) => item.id === id);
-      if (!source) return items;
-      const copy = normalizeProject({ ...source, id: `${Date.now()}-copy`, title: `${source.title} 副本`, thumbnailKey: source.thumbnailKey || `justgroove-thumbnail-${source.id}`, updatedAt: Date.now() });
-      return [copy, ...items];
+  useEffect(() => {
+    if (!cloud || !hydrated) return undefined;
+    const refresh = () => enqueue(async () => {
+      if (!mounted.current || dirty.current.size) return;
+      try {
+        const next = await Promise.all(items.current.map((p) => cloud.hydrate(p, ownerId)));
+        if (mounted.current && !dirty.current.size) publish(next);
+      } catch {}
     });
-  }, []);
+    const timer = setInterval(refresh, 60 * 60 * 1000);
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible); };
+  }, [cloud, hydrated, enqueue, ownerId, publish]);
 
-  const value = useMemo(() => ({ projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject }), [projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject]);
-  return <ProjectContext.Provider value={value}>{children}</ProjectContext.Provider>;
+  const change = useCallback((next, id) => {
+    if (!hydrated) throw new Error('專案仍在載入，請稍候。');
+    dirty.current.add(id);
+    publish(next);
+    persist().catch(() => setStorageError('本機儲存失敗，請保留此頁並重試。'));
+    setRevision((n) => n + 1);
+  }, [hydrated, publish, persist]);
+  const addProject = useCallback((input) => {
+    const project = normalizeProject({ ...input, ownerId, id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}` });
+    change([project, ...items.current], project.id);
+    return project;
+  }, [change, ownerId]);
+  const updateProject = useCallback((id, patch) => {
+    if (!items.current.some((p) => p.id === id)) return;
+    change(items.current.map((p) => p.id === id ? normalizeProject({ ...p, ...patch, ownerId, updatedAt: Date.now() }) : p), id);
+  }, [change, ownerId]);
+  const deleteProject = useCallback(async (id) => {
+    const project = items.current.find((p) => p.id === id);
+    if (!project) return;
+    deleting.current.add(id);
+    try {
+      if (cloud) await enqueue(() => cloud.remove(project, ownerId));
+      if (!mounted.current) return;
+      dirty.current.delete(id);
+      publish(items.current.filter((p) => p.id !== id));
+      await persist();
+    } catch (error) {
+      if (mounted.current) setStorageError('刪除未完成，請重試；專案記錄仍保留。');
+      throw error;
+    } finally { deleting.current.delete(id); }
+  }, [cloud, enqueue, ownerId, publish, persist]);
+  const duplicateProject = useCallback((id) => {
+    const original = items.current.find((p) => p.id === id);
+    if (!original) return;
+    // Copies own their files, so deleting one never breaks another.
+    const copyMedia = (media) => media ? { ...media, storagePath: undefined } : media;
+    return addProject({ ...original, title: `${original.title} 副本`, source: copyMedia(original.source), recordings: original.recordings.map(copyMedia), createdAt: Date.now(), updatedAt: Date.now() });
+  }, [addProject]);
+  const retrySync = () => {
+    setStorageError(null);
+    if (cloud && !cloudReady.current) setLoadAttempt((n) => n + 1);
+    else { persist().catch(() => setStorageError('本機儲存失敗。')); setRevision((n) => n + 1); }
+  };
+  return <ProjectContext.Provider value={{ projects, hydrated, storageError, syncStatus, retrySync, ownerId, addProject, updateProject, deleteProject, duplicateProject }}>{children}</ProjectContext.Provider>;
 }
 
 export const useProjects = () => useContext(ProjectContext);

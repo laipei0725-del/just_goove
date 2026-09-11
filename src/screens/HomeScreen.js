@@ -107,7 +107,7 @@ function ProjectCover({ project, onCoverReady }) {
 
 export default function HomeScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
+  const { projects, hydrated, storageError, syncStatus, retrySync, ownerId, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
   const { user, signOut, isGuest, signInWithEmail, signUpWithEmail } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
@@ -120,6 +120,7 @@ export default function HomeScreen({ navigation }) {
   const [onboarding, setOnboarding] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [pendingAdd, setPendingAdd] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -180,6 +181,13 @@ export default function HomeScreen({ navigation }) {
   const startRename = (project) => { setMenuProject(null); setRenameProject(project); setRenameValue(project.title); };
   const confirmRename = () => { const title = renameValue.trim(); if (title && renameProject) updateProject(renameProject.id, { title }); setRenameProject(null); };
   const askDelete = (project) => { setMenuProject(null); setDeleteTarget(project); };
+  const confirmDelete = async () => {
+    if (deleting || !deleteTarget) return;
+    setDeleting(true);
+    try { await deleteProject(deleteTarget.id); setDeleteTarget(null); }
+    catch { /* The shared sync banner shows the failure and retains the project. */ }
+    finally { setDeleting(false); }
+  };
 
   const renderProject = ({ item }) => (
     <Pressable onPress={() => openProject(item)} style={({ pressed }) => [styles.card, pressed && styles.pressed]} accessibilityRole="button" accessibilityLabel={`開始練習 ${item.title}`}>
@@ -200,6 +208,8 @@ export default function HomeScreen({ navigation }) {
       <Pressable style={styles.primary} onPress={() => requireAccount(() => setAddOpen(true))}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
       <View style={styles.recordingHint} accessibilityLabel="錄影功能提示"><Ionicons name="radio-button-on" size={18} color={C.lime} /><View style={{ flex: 1 }}><Text style={styles.recordingHintTitle}>錄影在練舞畫面</Text><Text style={styles.recordingHintText}>開啟專案後，底部工具列會看到「錄影」。目前合成錄影需要桌面版 Chrome。</Text></View></View>
       {storageError ? <View style={styles.storageWarning}><Ionicons name="shield-checkmark-outline" size={18} color={C.lime} /><Text style={styles.storageWarningText}>{storageError}</Text></View> : null}
+      {!!syncStatus && <Text accessibilityLiveRegion="polite" style={{ color: C.lime, marginBottom: 10 }}>{syncStatus}</Text>}
+      {!!storageError && <Pressable onPress={retrySync} style={styles.cancel}><Text style={styles.cancelText}>重新同步</Text></Pressable>}
       <View style={styles.sectionRow}><Text style={styles.sectionTitle}>我的練舞專案</Text><Text style={styles.count}>{projects.length}</Text></View>
       {!hydrated ? <ActivityIndicator color={C.lime} style={{ marginTop: 60 }} /> : (
         <FlatList data={sortedProjects} keyExtractor={(item) => item.id} renderItem={renderProject} numColumns={2} columnWrapperStyle={styles.columns} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false} ListEmptyComponent={<View style={styles.empty}><Ionicons name="albums-outline" size={38} color={C.muted} /><Text style={styles.emptyTitle}>還沒有練舞專案</Text><Text style={styles.emptyText}>從手機相簿或 YouTube 加入第一支影片。</Text></View>} />
@@ -220,7 +230,7 @@ export default function HomeScreen({ navigation }) {
       </Modal>
       <ProjectMenu visible={Boolean(menuProject)} project={menuProject} onClose={() => setMenuProject(null)} onPin={() => { updateProject(menuProject.id, { pinned: !menuProject.pinned }); setMenuProject(null); }} onRename={() => startRename(menuProject)} onDuplicate={() => { duplicateProject(menuProject.id); setMenuProject(null); }} onDelete={() => askDelete(menuProject)} />
       <Modal visible={Boolean(renameProject)} transparent animationType="fade" onRequestClose={() => setRenameProject(null)}><KeyboardAvoidingView style={styles.centeredBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={styles.dialog}><Text style={styles.sheetTitle}>重新命名專案</Text><TextInput autoFocus value={renameValue} onChangeText={setRenameValue} style={styles.input} placeholder="輸入專案名稱" placeholderTextColor="#69696D" /><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setRenameProject(null)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={confirmRename}><Text style={styles.confirmText}>儲存</Text></Pressable></View></View></KeyboardAvoidingView></Modal>
-      <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={() => setDeleteTarget(null)}><View style={styles.centeredBackdrop}><View style={styles.dialog}><Text style={styles.sheetTitle}>刪除這個專案？</Text><Text style={styles.dialogCopy}>「{deleteTarget?.title}」會從此裝置的專案清單移除，原始相簿影片不會被刪除。</Text><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setDeleteTarget(null)}><Text style={styles.cancelText}>保留</Text></Pressable><Pressable style={styles.dangerConfirm} onPress={() => { deleteProject(deleteTarget.id); setDeleteTarget(null); }}><Text style={styles.confirmText}>刪除</Text></Pressable></View></View></View></Modal>
+      <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={() => setDeleteTarget(null)}><View style={styles.centeredBackdrop}><View style={styles.dialog}><Text style={styles.sheetTitle}>刪除這個專案？</Text><Text style={styles.dialogCopy}>「{deleteTarget?.title}」的專案與雲端影片將被刪除，原始相簿影片保留。</Text><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setDeleteTarget(null)}><Text style={styles.cancelText}>保留</Text></Pressable><Pressable style={styles.dangerConfirm} disabled={deleting} onPress={confirmDelete}><Text style={styles.confirmText}>{deleting ? '刪除中…' : '刪除'}</Text></Pressable></View></View></View></Modal>
       <OnboardingOverlay userId={ownerId} visible={onboarding} onClose={() => setOnboarding(false)} />
       <AuthModal visible={authOpen} contextMessage={pendingAdd ? '請先登入以儲存練舞專案，登入後會接著讓你選擇相簿或 YouTube。' : undefined} onClose={cancelAuthIntent} onAuthenticated={() => setAuthOpen(false)} onContinueGuest={cancelAuthIntent} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} />
     </View>

@@ -161,7 +161,7 @@ export default function PracticeScreen({ route, navigation }) {
   useKeepAwake('just-groove-practice', { suppressDeactivateWarnings: Platform.OS === 'web' });
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { projects, updateProject, storageError } = useProjects();
+  const { projects, updateProject, storageError, syncStatus, retrySync } = useProjects();
   const project = projects.find((item) => item.id === route.params?.projectId);
   const cameraRef = useRef(null);
   const videoRef = useRef(null);
@@ -777,7 +777,7 @@ export default function PracticeScreen({ route, navigation }) {
         </View>}
 
       </View>
-      {!!(storageError || notice) && <View style={styles.notice} accessibilityLiveRegion="polite"><Text style={styles.noticeText}>{storageError || notice}</Text></View>}
+      {!!(storageError || notice || syncStatus) && <View style={styles.notice} accessibilityLiveRegion="polite"><Text style={styles.noticeText}>{storageError || notice || syncStatus}</Text>{!!storageError && <Pressable onPress={retrySync}><Text style={styles.noticeText}>重新同步</Text></Pressable>}</View>}
 
       <Modal visible={Boolean(recordingResult)} transparent animationType="fade" onRequestClose={() => setRecordingResult(null)}>
         <View style={styles.recordingModalBackdrop}><View style={styles.recordingModal}>

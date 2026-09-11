@@ -10,6 +10,7 @@ const friendlyAuthError = (error) => {
   if (message.includes('already registered') || message.includes('already been registered') || message.includes('user already exists')) return '這個 Email 已經註冊，請直接登入。';
   if (message.includes('password') && (message.includes('short') || message.includes('least') || message.includes('weak'))) return '密碼強度不足，請至少輸入 6 碼。';
   if (message.includes('invalid login credentials')) return 'Email 或密碼不正確。';
+  if (message.includes('email not confirmed')) return '請先到信箱點擊驗證連結，再回來登入。';
   if (message.includes('invalid') && message.includes('email')) return 'Email 格式不正確。';
   if (message.includes('rate limit') || message.includes('too many')) return '嘗試次數過多，請稍後再試。';
   return error?.message || '認證服務暫時無法使用，請稍後再試。';
@@ -29,7 +30,7 @@ export default function AuthModal({ visible, onClose, onAuthenticated, contextMe
     const cleanEmail = email.trim();
     const cleanUsername = username.trim();
     setSuccess(false);
-    if (mode === 'signUp' && !cleanUsername) return setMessage('請輸入名稱或使用者名稱。');
+    if (mode === 'signUp' && !cleanUsername) return setMessage('請輸入舞者名稱。');
     if (!EMAIL_PATTERN.test(cleanEmail)) return setMessage('請輸入正確的 Email 格式。');
     if (password.length < 6) return setMessage('密碼至少需要 6 碼。');
     if (mode === 'signUp' && password !== confirmPassword) return setMessage('兩次輸入的密碼不一致。');
@@ -77,7 +78,7 @@ export default function AuthModal({ visible, onClose, onAuthenticated, contextMe
               <Pressable onPress={onClose} hitSlop={10} accessibilityLabel="關閉登入視窗"><Ionicons name="close" size={24} color={C.text} /></Pressable>
             </View>
             {contextMessage ? <View style={styles.contextNotice}><Ionicons name="lock-closed-outline" size={17} color={C.lime} /><Text maxFontSizeMultiplier={1.25} style={styles.contextText}>{contextMessage}</Text></View> : null}
-            {mode === 'signUp' ? <TextInput value={username} onChangeText={setUsername} placeholder="名稱 / 使用者名稱" placeholderTextColor="#69696D" autoCapitalize="words" autoComplete="name" style={styles.input} /> : null}
+            {mode === 'signUp' ? <TextInput value={username} onChangeText={setUsername} placeholder="舞者名稱" placeholderTextColor="#69696D" autoCapitalize="words" autoComplete="name" style={styles.input} /> : null}
             <TextInput value={email} onChangeText={setEmail} placeholder="Email" placeholderTextColor="#69696D" autoCapitalize="none" autoCorrect={false} autoComplete="email" keyboardType="email-address" style={styles.input} />
             <TextInput value={password} onChangeText={setPassword} placeholder="密碼（至少 6 碼）" placeholderTextColor="#69696D" secureTextEntry autoComplete={mode === 'signIn' ? 'current-password' : 'new-password'} style={styles.input} />
             {mode === 'signUp' ? <TextInput value={confirmPassword} onChangeText={setConfirmPassword} placeholder="再次輸入密碼" placeholderTextColor="#69696D" secureTextEntry autoComplete="new-password" style={styles.input} /> : null}
@@ -85,7 +86,7 @@ export default function AuthModal({ visible, onClose, onAuthenticated, contextMe
             <Pressable style={({ pressed }) => [styles.primary, pressed && styles.pressed]} onPress={submit} disabled={busy}><Text numberOfLines={1} maxFontSizeMultiplier={1.2} style={styles.primaryText}>{busy ? '處理中…' : mode === 'signIn' ? 'Email 登入' : '建立帳號'}</Text></Pressable>
             <Pressable onPress={switchMode}><Text maxFontSizeMultiplier={1.2} style={styles.switch}>{mode === 'signIn' ? '第一次使用？建立帳號' : '已有帳號？返回登入'}</Text></Pressable>
             <Pressable style={styles.guest} onPress={onContinueGuest}><Text maxFontSizeMultiplier={1.2} style={styles.guestText}>先以訪客模式使用</Text></Pressable>
-            <Text maxFontSizeMultiplier={1.2} style={styles.note}>登入後會同步專案與影片設定；訪客資料只保存在此裝置。</Text>
+            <Text maxFontSizeMultiplier={1.2} style={styles.note}>帳號專案與上傳完成的影片可跨裝置使用。訪客專案獨立保留，不會合併到帳號。</Text>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
