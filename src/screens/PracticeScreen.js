@@ -682,7 +682,7 @@ export default function PracticeScreen({ route, navigation }) {
         const endAt = Number.isFinite(project?.trimEnd) && project.trimEnd > startAt ? project.trimEnd : videoEnd;
         await preparePlaybackForBrowserRecording(startAt, sourceVideo);
         browserRecorderRef.current = await startCleanPracticeRecording({
-          sourceVideo: recordingContent === 'camera' ? null : sourceVideo,
+          sourceVideo,
           cameraVideo,
           aspectRatio: project.aspectRatio,
           crop: project.crop,

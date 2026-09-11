@@ -108,7 +108,7 @@ export async function startCleanPracticeRecording({
 
   const videoStream = canvas.captureStream(30);
   const mixedStream = new MediaStream(videoStream.getVideoTracks());
-  if (content !== 'camera' && sourceVideo?.captureStream) {
+  if (sourceVideo?.captureStream) {
     sourceVideo.captureStream().getAudioTracks().forEach((track) => mixedStream.addTrack(track));
   } else if (ownedCameraStream) {
     ownedCameraStream.getAudioTracks().forEach((track) => mixedStream.addTrack(track));
