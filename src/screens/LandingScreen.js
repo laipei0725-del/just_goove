@@ -8,7 +8,7 @@ const LOGO = require('../../assets/icon.png');
 
 export default function LandingScreen({ navigation }) {
   const insets = useSafeAreaInsets();
-  const { user, ready, signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+  const { user, ready, signInWithEmail, signUpWithEmail } = useAuth();
   const [authOpen, setAuthOpen] = useState(false);
   const opacity = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(18)).current;
@@ -35,7 +35,7 @@ export default function LandingScreen({ navigation }) {
       </View>
       <Text style={styles.note}>訪客可瀏覽介面；登入後才能新增並同步練舞專案。</Text>
     </Animated.View>
-    <AuthModal visible={authOpen} onClose={() => setAuthOpen(false)} onContinueGuest={() => { setAuthOpen(false); navigation.replace('Home'); }} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} signInWithGoogle={signInWithGoogle} />
+    <AuthModal visible={authOpen} onClose={() => setAuthOpen(false)} onContinueGuest={() => { setAuthOpen(false); navigation.replace('Home'); }} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} />
   </View>;
 }
 

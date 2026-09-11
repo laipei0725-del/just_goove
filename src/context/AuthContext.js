@@ -16,14 +16,29 @@ export function AuthProvider({ children }) {
   }, []);
 
   const unavailable = { error: { message: '尚未設定 Supabase，請先填入 EXPO_PUBLIC_SUPABASE_URL 與 EXPO_PUBLIC_SUPABASE_ANON_KEY。' } };
+  const signUpWithEmail = async (username, email, password) => {
+    if (!supabase) return unavailable;
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { username } },
+      });
+      return { data, error };
+    } catch (error) {
+      return { data: null, error };
+    }
+  };
+
   const value = useMemo(() => ({
     ready,
     session,
     user: session?.user || null,
     isGuest: !session,
     signInWithEmail: (email, password) => supabase ? supabase.auth.signInWithPassword({ email, password }) : Promise.resolve(unavailable),
-    signUpWithEmail: (email, password) => supabase ? supabase.auth.signUp({ email, password }) : Promise.resolve(unavailable),
-    signInWithGoogle: () => supabase ? supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: typeof window !== 'undefined' ? window.location.origin : undefined } }) : Promise.resolve(unavailable),
+    signUpWithEmail,
+    // Google OAuth 暫時停用；需要恢復時再重新加入 signInWithOAuth({ provider: 'google' })。
+    // signInWithGoogle: () => supabase ? supabase.auth.signInWithOAuth({ provider: 'google' }) : Promise.resolve(unavailable),
     signOut: () => supabase ? supabase.auth.signOut() : Promise.resolve({}),
   }), [ready, session]);
 

@@ -108,7 +108,7 @@ function ProjectCover({ project, onCoverReady }) {
 export default function HomeScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { projects, hydrated, storageError, ownerId, addProject, updateProject, deleteProject, duplicateProject } = useProjects();
-  const { user, signOut, isGuest, signInWithEmail, signUpWithEmail, signInWithGoogle } = useAuth();
+  const { user, signOut, isGuest, signInWithEmail, signUpWithEmail } = useAuth();
   const [addOpen, setAddOpen] = useState(false);
   const [youtubeOpen, setYoutubeOpen] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState('');
@@ -222,7 +222,7 @@ export default function HomeScreen({ navigation }) {
       <Modal visible={Boolean(renameProject)} transparent animationType="fade" onRequestClose={() => setRenameProject(null)}><KeyboardAvoidingView style={styles.centeredBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={styles.dialog}><Text style={styles.sheetTitle}>重新命名專案</Text><TextInput autoFocus value={renameValue} onChangeText={setRenameValue} style={styles.input} placeholder="輸入專案名稱" placeholderTextColor="#69696D" /><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setRenameProject(null)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={confirmRename}><Text style={styles.confirmText}>儲存</Text></Pressable></View></View></KeyboardAvoidingView></Modal>
       <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={() => setDeleteTarget(null)}><View style={styles.centeredBackdrop}><View style={styles.dialog}><Text style={styles.sheetTitle}>刪除這個專案？</Text><Text style={styles.dialogCopy}>「{deleteTarget?.title}」會從此裝置的專案清單移除，原始相簿影片不會被刪除。</Text><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setDeleteTarget(null)}><Text style={styles.cancelText}>保留</Text></Pressable><Pressable style={styles.dangerConfirm} onPress={() => { deleteProject(deleteTarget.id); setDeleteTarget(null); }}><Text style={styles.confirmText}>刪除</Text></Pressable></View></View></View></Modal>
       <OnboardingOverlay userId={ownerId} visible={onboarding} onClose={() => setOnboarding(false)} />
-      <AuthModal visible={authOpen} contextMessage={pendingAdd ? '請先登入以儲存練舞專案，登入後會接著讓你選擇相簿或 YouTube。' : undefined} onClose={cancelAuthIntent} onAuthenticated={() => setAuthOpen(false)} onContinueGuest={cancelAuthIntent} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} signInWithGoogle={signInWithGoogle} />
+      <AuthModal visible={authOpen} contextMessage={pendingAdd ? '請先登入以儲存練舞專案，登入後會接著讓你選擇相簿或 YouTube。' : undefined} onClose={cancelAuthIntent} onAuthenticated={() => setAuthOpen(false)} onContinueGuest={cancelAuthIntent} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} />
     </View>
   );
 }
