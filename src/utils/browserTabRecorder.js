@@ -76,15 +76,17 @@ export async function startCleanPracticeRecording({
   mirrored = false,
   startAt = 0,
   endAt = null,
+  durationSeconds = null,
   playbackRate = 1,
   includeCamera = true,
+  content = 'camera',
   onStopped,
   onError,
 } = {}) {
-  if (!sourceVideo || typeof MediaRecorder === 'undefined') {
+  if (typeof MediaRecorder === 'undefined') {
     throw new Error('此瀏覽器無法錄製練習畫面，請使用最新版桌面 Chrome。');
   }
-  if (sourceVideo.readyState < 2) throw new Error('影片尚未準備好，請先播放影片後再錄影。');
+  if (content !== 'camera' && (!sourceVideo || sourceVideo.readyState < 2)) throw new Error('影片尚未準備好，請先播放影片後再錄影。');
 
   let ownedCameraStream = null;
   let hiddenCameraVideo = null;
@@ -96,7 +98,7 @@ export async function startCleanPracticeRecording({
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
-  const sourceSize = getVideoSize(sourceVideo);
+  const sourceSize = content === 'camera' && activeCameraVideo ? getVideoSize(activeCameraVideo) : getVideoSize(sourceVideo);
   const canvasSize = getRecordingCanvasSize(aspectRatio, sourceSize.width, sourceSize.height);
   const canvas = document.createElement('canvas');
   canvas.width = canvasSize.width;
@@ -106,8 +108,10 @@ export async function startCleanPracticeRecording({
 
   const videoStream = canvas.captureStream(30);
   const mixedStream = new MediaStream(videoStream.getVideoTracks());
-  if (sourceVideo.captureStream) {
+  if (content !== 'camera' && sourceVideo?.captureStream) {
     sourceVideo.captureStream().getAudioTracks().forEach((track) => mixedStream.addTrack(track));
+  } else if (ownedCameraStream) {
+    ownedCameraStream.getAudioTracks().forEach((track) => mixedStream.addTrack(track));
   }
 
   const mimeType = recorderMimeType();
@@ -116,16 +120,22 @@ export async function startCleanPracticeRecording({
   let startedAt = Date.now();
   let stopped = false;
   let frameId = null;
+  let durationTimer = null;
 
   const draw = () => {
     context.fillStyle = '#000000';
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const sourceRect = fitRect(sourceSize.width, sourceSize.height, canvas.width, canvas.height, crop);
-    drawMirroredVideo(context, sourceVideo, sourceRect, mirrored);
+    if (content !== 'camera') {
+      const sourceRect = fitRect(sourceSize.width, sourceSize.height, canvas.width, canvas.height, crop);
+      drawMirroredVideo(context, sourceVideo, sourceRect, mirrored);
+    }
 
     if (includeCamera && activeCameraVideo?.readyState >= 2) {
       const cameraSize = getVideoSize(activeCameraVideo);
-      if (cameraMode === 'split') {
+      if (content === 'camera') {
+        const cameraRect = fitRect(cameraSize.width, cameraSize.height, canvas.width, canvas.height, 'cover');
+        drawMirroredVideo(context, activeCameraVideo, cameraRect, true);
+      } else if (cameraMode === 'split') {
         const half = canvas.width / 2;
         const leftRect = fitRect(sourceSize.width, sourceSize.height, half, canvas.height, crop);
         const rightRect = fitRect(cameraSize.width, cameraSize.height, half, canvas.height, 'cover');
@@ -148,7 +158,7 @@ export async function startCleanPracticeRecording({
       }
     }
 
-    if (Number.isFinite(endAt) && sourceVideo.currentTime >= endAt - 0.04) {
+    if (content !== 'camera' && Number.isFinite(endAt) && sourceVideo.currentTime >= endAt - 0.04) {
       stop();
       return;
     }
@@ -157,16 +167,17 @@ export async function startCleanPracticeRecording({
 
   const cleanup = () => {
     if (frameId) cancelAnimationFrame(frameId);
+    if (durationTimer) clearTimeout(durationTimer);
     mixedStream.getTracks().forEach((track) => track.stop());
     ownedCameraStream?.getTracks().forEach((track) => track.stop());
     hiddenCameraVideo?.remove();
-    sourceVideo.removeEventListener('ended', stop);
+    sourceVideo?.removeEventListener?.('ended', stop);
   };
 
   function stop() {
     if (stopped) return;
     stopped = true;
-    try { sourceVideo.pause(); } catch {}
+    try { sourceVideo?.pause?.(); } catch {}
     if (recorder.state !== 'inactive') recorder.stop();
   }
 
@@ -182,12 +193,17 @@ export async function startCleanPracticeRecording({
     onStopped?.({ uri, blob, mimeType: blob.type, duration: Math.max(0, (Date.now() - startedAt) / 1000) });
   };
 
-  sourceVideo.addEventListener('ended', stop, { once: true });
-  await seekVideo(sourceVideo, startAt);
-  sourceVideo.playbackRate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
-  await sourceVideo.play();
+  if (content !== 'camera') {
+    sourceVideo.addEventListener('ended', stop, { once: true });
+    await seekVideo(sourceVideo, startAt);
+    sourceVideo.playbackRate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
+    await sourceVideo.play();
+  }
   recorder.start(250);
   startedAt = Date.now();
+  if (content === 'camera' && Number.isFinite(durationSeconds) && durationSeconds > 0) {
+    durationTimer = setTimeout(stop, durationSeconds * 1000);
+  }
   draw();
 
   return { stop, stream: mixedStream };

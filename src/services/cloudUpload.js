@@ -4,6 +4,14 @@ import { supabase, supabaseUrl } from './supabaseClient';
 export async function uploadCloudVideo(path, blob, onProgress, owner) {
   const { data, error } = await supabase.auth.getSession();
   if (error || data.session?.user.id !== owner) throw new Error('請登入後再上傳影片。');
+  const bucket = await supabase.storage.getBucket('user-videos');
+  if (bucket.error) {
+    const message = String(bucket.error.message || '').toLowerCase();
+    if (message.includes('not found') || bucket.error.statusCode === '404' || bucket.error.status === 404) {
+      throw new Error('雲端影片空間尚未建立，請先在 Supabase 執行 001_projects.sql 後再重新同步。');
+    }
+    throw new Error(bucket.error.message || '雲端影片空間無法連線，請稍後再試。');
+  }
   const endpoint = new URL(supabaseUrl);
   if (endpoint.hostname.endsWith('.supabase.co')) endpoint.hostname = endpoint.hostname.replace('.supabase.co', '.storage.supabase.co');
   endpoint.pathname = '/storage/v1/upload/resumable';
@@ -24,7 +32,7 @@ export async function uploadCloudVideo(path, blob, onProgress, owner) {
         request.setHeader('authorization', `Bearer ${current.session.access_token}`);
       },
       onProgress: (sent, total) => onProgress?.(Math.round(sent / total * 100)),
-      onError: () => reject(new Error('影片上傳失敗，請檢查網路與雲端容量後重試。')),
+      onError: (uploadError) => reject(new Error(uploadError?.message || '影片上傳失敗，請檢查網路與雲端容量後重試。')),
       onSuccess: resolve,
     });
     upload.findPreviousUploads().then((previous) => {

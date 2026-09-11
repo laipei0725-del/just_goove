@@ -31,6 +31,7 @@ const normalizeProject = (project) => ({
   frameStep: [24, 30, 60].includes(project.frameStep) ? project.frameStep : 30,
   skipSeconds: project.skipSeconds || 5,
   cameraMode: project.cameraMode || 'pip',
+  recordingContent: project.recordingContent || 'camera',
   bookmarks: project.bookmarks || [],
   recordings: project.recordings || [],
   updatedAt: project.updatedAt || Date.now(),

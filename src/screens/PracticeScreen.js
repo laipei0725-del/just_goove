@@ -204,6 +204,7 @@ export default function PracticeScreen({ route, navigation }) {
   const [cameraReady, setCameraReady] = useState(false);
   const cameraReadyRef = useRef(false);
   const [cameraMode, setCameraMode] = useState(project?.cameraMode || 'pip');
+  const [recordingContent, setRecordingContent] = useState(project?.recordingContent || 'camera');
   const [panelOpen, setPanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -416,9 +417,9 @@ export default function PracticeScreen({ route, navigation }) {
 
   useEffect(() => {
     if (!project?.id) return undefined;
-    const timer = setTimeout(() => updateProject(project.id, { speed, position, cameraMode, mirrored, frameStep: fps }), 800);
+    const timer = setTimeout(() => updateProject(project.id, { speed, position, cameraMode, recordingContent, mirrored, frameStep: fps }), 800);
     return () => clearTimeout(timer);
-  }, [project?.id, speed, position, cameraMode, mirrored, fps, updateProject]);
+  }, [project?.id, speed, position, cameraMode, recordingContent, mirrored, fps, updateProject]);
 
   const seek = useCallback((value, unrestricted = false) => {
     const requested = finiteNumber(value, trimStart);
@@ -575,7 +576,7 @@ export default function PracticeScreen({ route, navigation }) {
     updateProject(project.id, {
       recordings: [...(project.recordings || []), { id: `${Date.now()}`, uri, mimeType, duration, createdAt: Date.now(), downloaded: true }],
     });
-    setRecordingResult({ uri, mimeType, duration, blob });
+    setRecordingResult({ uri, mimeType, duration, blob, content: recordingContent });
     setNotice('錄影完成，請在彈出視窗按「下載影片」。');
   };
 
@@ -607,14 +608,14 @@ export default function PracticeScreen({ route, navigation }) {
 
   const beginRecording = async () => {
     if (Platform.OS === 'web') {
-      const canCaptureTab = typeof navigator !== 'undefined'
-        && Boolean(navigator.mediaDevices?.getDisplayMedia)
+      const canRecordCanvas = typeof navigator !== 'undefined'
+        && Boolean(navigator.mediaDevices?.getUserMedia)
         && typeof MediaRecorder !== 'undefined';
-      if (!canCaptureTab) {
-        setNotice('目前瀏覽器不支援分頁合成錄影。請改用桌面版 Chrome；iPhone Chrome 會在原生 App 版支援。');
+      if (!canRecordCanvas) {
+        setNotice('目前瀏覽器不支援相機錄影。請改用桌面版 Chrome；iPhone Chrome 會在原生 App 版支援。');
         return;
       }
-      if (source?.type !== 'local') {
+      if (recordingContent !== 'camera' && source?.type !== 'local') {
         setNotice('乾淨原影片錄影目前先支援匯入影片；YouTube 受跨來源限制，請先下載影片後匯入。');
         return;
       }
@@ -623,7 +624,7 @@ export default function PracticeScreen({ route, navigation }) {
         await new Promise((resolve) => setTimeout(resolve, 900));
       }
       setControlsVisible(false);
-      setNotice('正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
+      setNotice(recordingContent === 'camera' ? '正在準備只錄我的相機畫面。' : '正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
       setCountdown(3);
       for (let value = 3; value > 0; value -= 1) {
         setCountdown(value);
@@ -634,11 +635,17 @@ export default function PracticeScreen({ route, navigation }) {
         const sourceVideo = findPracticeVideoElement('practice-source-video') || document.querySelector('video');
         const cameraVideo = await waitForPracticeVideoElement('practice-camera-video');
         const startAt = 0;
-        const videoEnd = Number.isFinite(total) && total > startAt ? total : sourceVideo.duration;
+        const videoEnd = Number.isFinite(total) && total > startAt ? total : sourceVideo?.duration;
         const endAt = Number.isFinite(project?.trimEnd) && project.trimEnd > startAt ? project.trimEnd : videoEnd;
-        seek(startAt, true);
         setPlaying(false);
+        seek(startAt, true);
         await new Promise((resolve) => setTimeout(resolve, 250));
+        setPlaying(true);
+        if (recordingContent === 'camera' && source?.type === 'local' && sourceVideo) {
+          sourceVideo.currentTime = startAt;
+          sourceVideo.playbackRate = Number.isFinite(speed) && speed > 0 ? speed : 1;
+          sourceVideo.play?.().catch?.(() => {});
+        }
         browserRecorderRef.current = await startCleanPracticeRecording({
           sourceVideo,
           cameraVideo,
@@ -648,15 +655,17 @@ export default function PracticeScreen({ route, navigation }) {
           mirrored,
           startAt,
           endAt,
+          durationSeconds: Number.isFinite(endAt) && endAt > startAt ? (endAt - startAt) / Math.max(speed, 0.1) : null,
           playbackRate: speed,
           includeCamera: true,
+          content: recordingContent,
           onStopped: (result) => {
             browserRecorderRef.current = null;
             setRecording(false);
             setControlsVisible(true);
             finishBrowserRecording(result);
           },
-          onError: () => { setNotice('合成錄影失敗，請確認影片與相機已載入後再試。'); setRecording(false); setControlsVisible(true); },
+          onError: () => { setNotice('錄影失敗，請確認影片與相機已載入後再試。'); setRecording(false); setControlsVisible(true); },
         });
         setRecordSeconds(0);
         setRecording(true);
@@ -812,8 +821,8 @@ export default function PracticeScreen({ route, navigation }) {
 
       <Modal visible={Boolean(recordingResult)} transparent animationType="fade" onRequestClose={() => setRecordingResult(null)}>
         <View style={styles.recordingModalBackdrop}><View style={styles.recordingModal}>
-          <Text style={styles.recordingModalTitle}>練習影片錄製完成</Text>
-          <Text style={styles.recordingModalText}>已排除 App 按鈕與框線，共 {time(recordingResult?.duration || 0)}。</Text>
+          <Text style={styles.recordingModalTitle}>{recordingResult?.content === 'camera' ? '我的相機錄製完成' : '練習影片錄製完成'}</Text>
+          <Text style={styles.recordingModalText}>{recordingResult?.content === 'camera' ? '輸出只包含你的相機畫面' : '已排除 App 按鈕與框線'}，共 {time(recordingResult?.duration || 0)}。</Text>
           <View style={styles.recordingModalActions}><Pressable style={styles.secondaryAction} onPress={() => setRecordingResult(null)}><Text style={styles.actionText}>關閉</Text></Pressable><Pressable style={styles.primaryAction} onPress={downloadRecording}><Text style={styles.primaryText}>下載影片</Text></Pressable></View>
         </View></View>
       </Modal>
@@ -857,7 +866,7 @@ export default function PracticeScreen({ route, navigation }) {
           <ChoiceRow label="刪除書籤" onPress={() => { updateProject(project.id, { bookmarks: project.bookmarks.filter((item) => item.id !== managedBookmark.id) }); setManagedBookmark(null); }} />
         </>}
       </EditorSheet>
-      <SettingsModal visible={settingsOpen} onClose={() => { setSettingsOpen(false); keepYoutubeControlsVisible(true); }} project={project} playMode={playMode} setPlayMode={setPlayMode} onTrim={() => { setSettingsOpen(false); openTrim(); }} position={position} total={total} cameraMode={cameraMode} setCameraMode={(value) => { setCameraMode(value); updateProject(project.id, { cameraMode: value }); }} update={(patch) => updateProject(project.id, patch)} />
+      <SettingsModal visible={settingsOpen} onClose={() => { setSettingsOpen(false); keepYoutubeControlsVisible(true); }} project={project} playMode={playMode} setPlayMode={setPlayMode} onTrim={() => { setSettingsOpen(false); openTrim(); }} position={position} total={total} cameraMode={cameraMode} setCameraMode={(value) => { setCameraMode(value); updateProject(project.id, { cameraMode: value }); }} recordingContent={recordingContent} setRecordingContent={(value) => { setRecordingContent(value); updateProject(project.id, { recordingContent: value }); }} update={(patch) => updateProject(project.id, patch)} />
     </View>
   );
 }
@@ -883,12 +892,13 @@ function EditorSheet({ visible, title, onClose, compact = false, children }) {
   </Modal>;
 }
 
-function SettingsModal({ visible, onClose, onTrim, project, playMode, setPlayMode, position, total, cameraMode, setCameraMode, update }) {
+function SettingsModal({ visible, onClose, onTrim, project, playMode, setPlayMode, position, total, cameraMode, setCameraMode, recordingContent, setRecordingContent, update }) {
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.settingsSheet}><View style={styles.settingsHeader}><Text style={styles.settingsTitle}>練舞設定</Text><Pressable style={styles.close} onPress={onClose}><Ionicons name="close" size={23} color={C.text} /></Pressable></View><ScrollView showsVerticalScrollIndicator={false}>
     <Text style={styles.groupTitle}>播放模式</Text><ChoiceRow label="整支影片循環" selected={playMode === 'full-loop'} onPress={() => setPlayMode('full-loop')} /><ChoiceRow label="AB 區間循環" selected={playMode === 'ab-loop'} onPress={() => setPlayMode('ab-loop')} />
     <ChoiceRow label="剪輯影片長度" value="使用影格時間軸選取播放範圍" onPress={onTrim} />
     <Text style={styles.groupTitle}>裁切畫面</Text>{[['完整顯示', 'contain', 'auto'], ['填滿畫面', 'cover', 'auto'], ['9:16', 'contain', '9:16'], ['16:9', 'contain', '16:9'], ['1:1', 'contain', '1:1']].map(([label, crop, ratio]) => <ChoiceRow key={label} label={label} selected={project.crop === crop && project.aspectRatio === ratio} onPress={() => update({ crop, aspectRatio: ratio })} />)}
     <Text style={styles.groupTitle}>相機畫面模式</Text>{[['前鏡頭小窗', 'pip'], ['半透明全身疊加', 'overlay'], ['影片與相機左右分割', 'split']].map(([label, value]) => <ChoiceRow key={value} label={label} selected={cameraMode === value} onPress={() => setCameraMode(value)} />)}
+    <Text style={styles.groupTitle}>錄影輸出內容</Text>{[['只錄我的相機', 'camera'], ['影片＋我的相機', 'composite']].map(([label, value]) => <ChoiceRow key={value} label={label} selected={recordingContent === value} onPress={() => setRecordingContent(value)} />)}
     <Text style={styles.groupTitle}>快進／後退秒數</Text><View style={styles.pills}>{[5, 10, 15].map((value) => <Pressable key={value} onPress={() => update({ skipSeconds: value })} style={[styles.settingPill, project.skipSeconds === value && styles.settingPillActive]}><Text style={[styles.settingPillText, project.skipSeconds === value && { color: C.bg }]}>{value} 秒</Text></Pressable>)}</View>
   </ScrollView></View></View></Modal>;
 }
