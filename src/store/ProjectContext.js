@@ -32,6 +32,7 @@ const normalizeProject = (project) => ({
   skipSeconds: project.skipSeconds || 5,
   cameraMode: project.cameraMode || 'pip',
   recordingContent: project.recordingContent || 'camera',
+  recordingAudio: project.recordingAudio || 'source',
   bookmarks: project.bookmarks || [],
   recordings: project.recordings || [],
   updatedAt: project.updatedAt || Date.now(),

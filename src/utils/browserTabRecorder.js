@@ -1,4 +1,6 @@
 const preferredMimeTypes = [
+  'video/mp4;codecs=h264,aac',
+  'video/mp4',
   'video/webm;codecs=vp9,opus',
   'video/webm;codecs=vp8,opus',
   'video/webm',
@@ -80,6 +82,8 @@ export async function startCleanPracticeRecording({
   playbackRate = 1,
   includeCamera = true,
   content = 'camera',
+  audioSource = 'source',
+  microphoneStream = null,
   onStopped,
   onError,
 } = {}) {
@@ -108,10 +112,10 @@ export async function startCleanPracticeRecording({
 
   const videoStream = canvas.captureStream(30);
   const mixedStream = new MediaStream(videoStream.getVideoTracks());
-  if (sourceVideo?.captureStream) {
+  if (audioSource === 'source' && sourceVideo?.captureStream) {
     sourceVideo.captureStream().getAudioTracks().forEach((track) => mixedStream.addTrack(track));
-  } else if (ownedCameraStream) {
-    ownedCameraStream.getAudioTracks().forEach((track) => mixedStream.addTrack(track));
+  } else if (audioSource === 'microphone') {
+    microphoneStream?.getAudioTracks().forEach((track) => mixedStream.addTrack(track));
   }
 
   const mimeType = recorderMimeType();
@@ -158,7 +162,7 @@ export async function startCleanPracticeRecording({
       }
     }
 
-    if (content !== 'camera' && Number.isFinite(endAt) && sourceVideo.currentTime >= endAt - 0.04) {
+    if (sourceVideo && Number.isFinite(endAt) && sourceVideo.currentTime >= endAt - 0.04) {
       stop();
       return;
     }
@@ -170,6 +174,7 @@ export async function startCleanPracticeRecording({
     if (durationTimer) clearTimeout(durationTimer);
     mixedStream.getTracks().forEach((track) => track.stop());
     ownedCameraStream?.getTracks().forEach((track) => track.stop());
+    microphoneStream?.getTracks().forEach((track) => track.stop());
     hiddenCameraVideo?.remove();
     sourceVideo?.removeEventListener?.('ended', stop);
   };
@@ -193,15 +198,22 @@ export async function startCleanPracticeRecording({
     onStopped?.({ uri, blob, mimeType: blob.type, duration: Math.max(0, (Date.now() - startedAt) / 1000) });
   };
 
-  if (content !== 'camera') {
+  if (sourceVideo) {
     sourceVideo.addEventListener('ended', stop, { once: true });
     await seekVideo(sourceVideo, startAt);
     sourceVideo.playbackRate = Number.isFinite(playbackRate) && playbackRate > 0 ? playbackRate : 1;
-    await sourceVideo.play();
   }
   recorder.start(250);
   startedAt = Date.now();
-  if (content === 'camera' && Number.isFinite(durationSeconds) && durationSeconds > 0) {
+  if (sourceVideo) {
+    try {
+      await sourceVideo.play();
+    } catch (error) {
+      stop();
+      throw error;
+    }
+  }
+  if (Number.isFinite(durationSeconds) && durationSeconds > 0) {
     durationTimer = setTimeout(stop, durationSeconds * 1000);
   }
   draw();

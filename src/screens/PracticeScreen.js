@@ -205,6 +205,7 @@ export default function PracticeScreen({ route, navigation }) {
   const cameraReadyRef = useRef(false);
   const [cameraMode, setCameraMode] = useState(project?.cameraMode || 'pip');
   const [recordingContent, setRecordingContent] = useState(project?.recordingContent || 'camera');
+  const [recordingAudio, setRecordingAudio] = useState(project?.recordingAudio || 'source');
   const [panelOpen, setPanelOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -417,9 +418,9 @@ export default function PracticeScreen({ route, navigation }) {
 
   useEffect(() => {
     if (!project?.id) return undefined;
-    const timer = setTimeout(() => updateProject(project.id, { speed, position, cameraMode, recordingContent, mirrored, frameStep: fps }), 800);
+    const timer = setTimeout(() => updateProject(project.id, { speed, position, cameraMode, recordingContent, recordingAudio, mirrored, frameStep: fps }), 800);
     return () => clearTimeout(timer);
-  }, [project?.id, speed, position, cameraMode, recordingContent, mirrored, fps, updateProject]);
+  }, [project?.id, speed, position, cameraMode, recordingContent, recordingAudio, mirrored, fps, updateProject]);
 
   const seek = useCallback((value, unrestricted = false) => {
     const requested = finiteNumber(value, trimStart);
@@ -576,8 +577,7 @@ export default function PracticeScreen({ route, navigation }) {
     updateProject(project.id, {
       recordings: [...(project.recordings || []), { id: `${Date.now()}`, uri, mimeType, duration, createdAt: Date.now(), downloaded: true }],
     });
-    setRecordingResult({ uri, mimeType, duration, blob, content: recordingContent });
-    setNotice('錄影完成，請在彈出視窗按「下載影片」。');
+    autoDownloadRecording({ uri, mimeType, duration, blob, content: recordingContent });
   };
 
   const closeCameraPreview = () => {
@@ -586,16 +586,59 @@ export default function PracticeScreen({ route, navigation }) {
     setCameraVisible(false);
   };
 
-  const downloadRecording = () => {
-    if (!recordingResult?.uri || typeof document === 'undefined') return;
-    const extension = recordingResult.mimeType?.includes('mp4') ? 'mp4' : 'webm';
+  const triggerRecordingDownload = (result) => {
+    if (!result?.uri || typeof document === 'undefined') return false;
+    const extension = result.mimeType?.includes('mp4') ? 'mp4' : 'webm';
     const link = document.createElement('a');
-    link.href = recordingResult.uri;
+    link.href = result.uri;
     link.download = `just-groove-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
     link.click();
+    return true;
+  };
+
+  const autoDownloadRecording = (result) => {
+    const downloaded = triggerRecordingDownload(result);
+    closeCameraPreview();
+    setRecordingResult(downloaded ? null : result);
+    setNotice(downloaded ? '錄影完成，影片已自動下載，視訊已關閉。' : '錄影完成，請在彈出視窗按「下載影片」。');
+  };
+
+  const downloadRecording = () => {
+    if (!recordingResult?.uri || typeof document === 'undefined') return;
+    triggerRecordingDownload(recordingResult);
     closeCameraPreview();
     setRecordingResult(null);
     setNotice('影片已下載到本機，視訊已關閉；再次按錄影才會重新開啟。');
+  };
+
+  const playCountdownBeep = () => {
+    if (typeof window === 'undefined') return;
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    try {
+      const context = new AudioContext();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.16);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.18);
+      setTimeout(() => context.close?.(), 260);
+    } catch {}
+  };
+
+  const recordingRange = () => {
+    if (playMode === 'ab-loop' && activeAbRange?.end > activeAbRange.start) {
+      return { start: activeAbRange.start, end: activeAbRange.end, kind: 'ab' };
+    }
+    const hasTrim = total > 0 && (trimStart > 0.025 || timelineMaximum < total - 0.025);
+    if (hasTrim && timelineMaximum > trimStart) return { start: trimStart, end: timelineMaximum, kind: 'trim' };
+    return { start: clamp(position, 0, total || Math.max(position, 1)), end: null, kind: 'manual' };
   };
 
   const findPracticeVideoElement = (selector) => {
@@ -631,15 +674,6 @@ export default function PracticeScreen({ route, navigation }) {
       seek(startAt, true);
     }
     await new Promise((resolve) => setTimeout(resolve, 350));
-    setPlaying(true);
-    if (source?.type === 'youtube') {
-      try { ytRef.current?.playVideo?.(); } catch {}
-    } else if (sourceVideo) {
-      try { await sourceVideo.play?.(); } catch {}
-    } else {
-      seek(startAt, true);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
   };
 
   const pausePracticePlayback = () => {
@@ -673,21 +707,27 @@ export default function PracticeScreen({ route, navigation }) {
         await new Promise((resolve) => setTimeout(resolve, 1200));
       }
       setControlsVisible(false);
-      setNotice(recordingContent === 'camera' ? '正在準備只錄我的相機畫面，影片會同步從頭播放。' : '正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
-      setCountdown(3);
-      for (let value = 3; value > 0; value -= 1) {
-        setCountdown(value);
-        await new Promise((resolve) => setTimeout(resolve, 850));
-      }
-      setCountdown(null);
+      setNotice(recordingContent === 'camera' ? '正在準備只錄我的相機畫面，影片會與片段同步開始。' : '正在準備乾淨合成錄影，錄製內容不包含 App 按鈕與框線。');
+      let microphoneStream = null;
       try {
         const sourceVideo = source?.type === 'local' ? findPracticeVideoElement('practice-source-video') : null;
         const cameraVideo = await waitForPracticeVideoElement('practice-camera-video');
         if (!cameraVideo) throw new Error('相機尚未準備好，請允許相機權限後再試。');
-        const startAt = 0;
-        const videoEnd = Number.isFinite(total) && total > startAt ? total : sourceVideo?.duration;
-        const endAt = Number.isFinite(project?.trimEnd) && project.trimEnd > startAt ? project.trimEnd : videoEnd;
+        const range = recordingRange();
+        const startAt = Math.max(0, finiteNumber(range.start));
+        const videoEnd = Number.isFinite(range.end) && range.end > startAt ? range.end : null;
+        const endAt = videoEnd;
         await preparePlaybackForBrowserRecording(startAt, sourceVideo);
+        const effectiveAudio = source?.type === 'youtube' && recordingAudio === 'source' ? 'microphone' : recordingAudio;
+        microphoneStream = effectiveAudio === 'microphone'
+          ? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+          : null;
+        for (let value = 3; value > 0; value -= 1) {
+          setCountdown(value);
+          playCountdownBeep();
+          await new Promise((resolve) => setTimeout(resolve, 850));
+        }
+        setCountdown(null);
         browserRecorderRef.current = await startCleanPracticeRecording({
           sourceVideo,
           cameraVideo,
@@ -701,6 +741,8 @@ export default function PracticeScreen({ route, navigation }) {
           playbackRate: speed,
           includeCamera: true,
           content: recordingContent,
+          audioSource: effectiveAudio,
+          microphoneStream,
           onStopped: (result) => {
             browserRecorderRef.current = null;
             setRecording(false);
@@ -710,9 +752,14 @@ export default function PracticeScreen({ route, navigation }) {
           },
           onError: () => { pausePracticePlayback(); setNotice('錄影失敗，請確認影片與相機已載入後再試。'); setRecording(false); setControlsVisible(true); },
         });
+        if (source?.type === 'youtube') {
+          try { ytRef.current?.playVideo?.(); } catch {}
+        }
+        setPlaying(true);
         setRecordSeconds(0);
         setRecording(true);
       } catch (error) {
+        microphoneStream?.getTracks?.().forEach((track) => track.stop());
         pausePracticePlayback();
         setCountdown(null); setControlsVisible(true);
         setNotice(error?.message || 'Chrome 未允許目前分頁的畫面與音訊錄製。');
@@ -910,7 +957,7 @@ export default function PracticeScreen({ route, navigation }) {
           <ChoiceRow label="刪除書籤" onPress={() => { updateProject(project.id, { bookmarks: project.bookmarks.filter((item) => item.id !== managedBookmark.id) }); setManagedBookmark(null); }} />
         </>}
       </EditorSheet>
-      <SettingsModal visible={settingsOpen} onClose={() => { setSettingsOpen(false); keepYoutubeControlsVisible(true); }} project={project} playMode={playMode} setPlayMode={setPlayMode} onTrim={() => { setSettingsOpen(false); openTrim(); }} position={position} total={total} cameraMode={cameraMode} setCameraMode={(value) => { setCameraMode(value); updateProject(project.id, { cameraMode: value }); }} recordingContent={recordingContent} setRecordingContent={(value) => { setRecordingContent(value); updateProject(project.id, { recordingContent: value }); }} update={(patch) => updateProject(project.id, patch)} />
+      <SettingsModal visible={settingsOpen} onClose={() => { setSettingsOpen(false); keepYoutubeControlsVisible(true); }} project={project} playMode={playMode} setPlayMode={setPlayMode} onTrim={() => { setSettingsOpen(false); openTrim(); }} position={position} total={total} cameraMode={cameraMode} setCameraMode={(value) => { setCameraMode(value); updateProject(project.id, { cameraMode: value }); }} recordingContent={recordingContent} setRecordingContent={(value) => { setRecordingContent(value); updateProject(project.id, { recordingContent: value }); }} recordingAudio={recordingAudio} setRecordingAudio={(value) => { setRecordingAudio(value); updateProject(project.id, { recordingAudio: value }); }} update={(patch) => updateProject(project.id, patch)} />
     </View>
   );
 }
@@ -936,13 +983,14 @@ function EditorSheet({ visible, title, onClose, compact = false, children }) {
   </Modal>;
 }
 
-function SettingsModal({ visible, onClose, onTrim, project, playMode, setPlayMode, position, total, cameraMode, setCameraMode, recordingContent, setRecordingContent, update }) {
+function SettingsModal({ visible, onClose, onTrim, project, playMode, setPlayMode, position, total, cameraMode, setCameraMode, recordingContent, setRecordingContent, recordingAudio, setRecordingAudio, update }) {
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalBackdrop}><View style={styles.settingsSheet}><View style={styles.settingsHeader}><Text style={styles.settingsTitle}>練舞設定</Text><Pressable style={styles.close} onPress={onClose}><Ionicons name="close" size={23} color={C.text} /></Pressable></View><ScrollView showsVerticalScrollIndicator={false}>
     <Text style={styles.groupTitle}>播放模式</Text><ChoiceRow label="整支影片循環" selected={playMode === 'full-loop'} onPress={() => setPlayMode('full-loop')} /><ChoiceRow label="AB 區間循環" selected={playMode === 'ab-loop'} onPress={() => setPlayMode('ab-loop')} />
     <ChoiceRow label="剪輯影片長度" value="使用影格時間軸選取播放範圍" onPress={onTrim} />
     <Text style={styles.groupTitle}>裁切畫面</Text>{[['完整顯示', 'contain', 'auto'], ['填滿畫面', 'cover', 'auto'], ['9:16', 'contain', '9:16'], ['16:9', 'contain', '16:9'], ['1:1', 'contain', '1:1']].map(([label, crop, ratio]) => <ChoiceRow key={label} label={label} selected={project.crop === crop && project.aspectRatio === ratio} onPress={() => update({ crop, aspectRatio: ratio })} />)}
     <Text style={styles.groupTitle}>相機畫面模式</Text>{[['前鏡頭小窗', 'pip'], ['半透明全身疊加', 'overlay'], ['影片與相機左右分割', 'split']].map(([label, value]) => <ChoiceRow key={value} label={label} selected={cameraMode === value} onPress={() => setCameraMode(value)} />)}
     <Text style={styles.groupTitle}>錄影輸出內容</Text>{[['只錄我的相機', 'camera'], ['影片＋我的相機', 'composite']].map(([label, value]) => <ChoiceRow key={value} label={label} selected={recordingContent === value} onPress={() => setRecordingContent(value)} />)}
+    <Text style={styles.groupTitle}>錄影音訊來源</Text>{[['原影片音樂', 'source'], ['麥克風收音', 'microphone'], ['靜音', 'muted']].map(([label, value]) => <ChoiceRow key={value} label={label} value={value === 'source' && project.source?.type === 'youtube' ? 'YouTube 會自動改用麥克風' : ''} selected={recordingAudio === value} onPress={() => setRecordingAudio(value)} />)}
     <Text style={styles.groupTitle}>快進／後退秒數</Text><View style={styles.pills}>{[5, 10, 15].map((value) => <Pressable key={value} onPress={() => update({ skipSeconds: value })} style={[styles.settingPill, project.skipSeconds === value && styles.settingPillActive]}><Text style={[styles.settingPillText, project.skipSeconds === value && { color: C.bg }]}>{value} 秒</Text></Pressable>)}</View>
   </ScrollView></View></View></Modal>;
 }
