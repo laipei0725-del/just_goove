@@ -580,6 +580,12 @@ export default function PracticeScreen({ route, navigation }) {
     setNotice('錄影完成，請在彈出視窗按「下載影片」。');
   };
 
+  const closeCameraPreview = () => {
+    cameraReadyRef.current = false;
+    setCameraReady(false);
+    setCameraVisible(false);
+  };
+
   const downloadRecording = () => {
     if (!recordingResult?.uri || typeof document === 'undefined') return;
     const extension = recordingResult.mimeType?.includes('mp4') ? 'mp4' : 'webm';
@@ -587,8 +593,9 @@ export default function PracticeScreen({ route, navigation }) {
     link.href = recordingResult.uri;
     link.download = `just-groove-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
     link.click();
+    closeCameraPreview();
     setRecordingResult(null);
-    setNotice('影片已下載到本機。');
+    setNotice('影片已下載到本機，視訊已關閉；再次按錄影才會重新開啟。');
   };
 
   const findPracticeVideoElement = (selector) => {
