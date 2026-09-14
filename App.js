@@ -11,6 +11,7 @@ import LandingScreen from './src/screens/LandingScreen';
 import { ProjectProvider } from './src/store/ProjectContext';
 import { AuthProvider } from './src/context/AuthContext';
 import AppErrorBoundary from './src/components/AppErrorBoundary';
+import BrandIntroOverlay from './src/components/BrandIntroOverlay';
 
 const Stack = createNativeStackNavigator();
 const theme = {
@@ -40,6 +41,7 @@ export default function App() {
                 <Stack.Screen name="Home" component={HomeScreen} />
                 <Stack.Screen name="Practice">{(props) => <AppErrorBoundary resetKey={props.route.params?.projectId}><PracticeScreen {...props} /></AppErrorBoundary>}</Stack.Screen>
               </Stack.Navigator>
+              <BrandIntroOverlay />
             </NavigationContainer>
           </AppErrorBoundary>
         </ProjectProvider>

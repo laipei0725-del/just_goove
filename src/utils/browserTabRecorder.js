@@ -24,6 +24,18 @@ export const getRecordingCanvasSize = (aspectRatio = 'auto', sourceWidth = 1080,
   return sourceWidth >= sourceHeight ? { width: 1280, height: 720 } : { width: 720, height: 1280 };
 };
 
+const requestCameraStream = async () => {
+  const constraints = [
+    { video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false },
+    { video: true, audio: false },
+  ];
+  let lastError = null;
+  for (const constraint of constraints) {
+    try { return await navigator.mediaDevices.getUserMedia(constraint); } catch (error) { lastError = error; }
+  }
+  throw lastError || new Error('相機啟動失敗');
+};
+
 const createHiddenVideo = (stream) => {
   const video = document.createElement('video');
   video.muted = true;
@@ -96,7 +108,7 @@ export async function startCleanPracticeRecording({
   let hiddenCameraVideo = null;
   let activeCameraVideo = includeCamera ? cameraVideo : null;
   if (includeCamera && !activeCameraVideo && navigator.mediaDevices?.getUserMedia) {
-    ownedCameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    ownedCameraStream = await requestCameraStream();
     hiddenCameraVideo = createHiddenVideo(ownedCameraStream);
     activeCameraVideo = hiddenCameraVideo;
     await new Promise((resolve) => setTimeout(resolve, 300));

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 
-const SEEN_KEY = 'just-groove:brand-intro-seen';
+const SEEN_KEY = 'just-groove:brand-intro-seen:v2';
 
 export default function BrandIntroOverlay() {
   const [visible, setVisible] = useState(false);

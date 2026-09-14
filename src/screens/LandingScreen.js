@@ -33,7 +33,7 @@ export default function LandingScreen({ navigation }) {
         <Pressable style={styles.primary} onPress={() => setAuthOpen(true)}><Text style={styles.primaryText}>立即登入 / 開始練舞</Text></Pressable>
         <Pressable style={styles.secondary} onPress={() => navigation.replace('Home')}><Text style={styles.secondaryText}>訪客快速試用</Text></Pressable>
       </View>
-      <Text style={styles.note}>訪客可瀏覽介面；登入後才能新增並同步練舞專案。</Text>
+      <Text style={styles.note}>訪客可直接建立本機練舞專案；登入後再同步到雲端。</Text>
     </Animated.View>
     <AuthModal visible={authOpen} onClose={() => setAuthOpen(false)} onContinueGuest={() => { setAuthOpen(false); navigation.replace('Home'); }} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} />
   </View>;

@@ -16,7 +16,6 @@ const { extractYouTubeId } = require('../utils/youtubeUrl.cjs');
 
 const C = { bg: '#0D0D0D', card: '#1B1B1B', line: '#2B2B2B', lime: '#C8FF35', text: '#F4F4F2', muted: '#9A9A96' };
 const BRAND_LOGO = require('../../assets/icon.png');
-const AUTH_INTENT_KEY = 'just-groove:auth-intent';
 const thumbnailKeyFor = (project) => project.thumbnailKey || `justgroove-thumbnail-${project.id}`;
 const formatDuration = (durationMs) => {
   if (!Number.isFinite(durationMs) || durationMs < 0) return '--:--';
@@ -119,7 +118,6 @@ export default function HomeScreen({ navigation }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [onboarding, setOnboarding] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
-  const [pendingAdd, setPendingAdd] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
@@ -127,34 +125,11 @@ export default function HomeScreen({ navigation }) {
     try { if (!globalThis?.localStorage?.getItem(`hasSeenOnboarding:${ownerId}`)) setOnboarding(true); } catch {}
   }, [hydrated, ownerId]);
 
-  useEffect(() => {
-    if (isGuest) return;
-    let shouldOpen = pendingAdd;
-    try { shouldOpen = shouldOpen || globalThis?.sessionStorage?.getItem(AUTH_INTENT_KEY) === 'add-project'; } catch {}
-    if (!shouldOpen) return;
-    try { globalThis?.sessionStorage?.removeItem(AUTH_INTENT_KEY); } catch {}
-    setPendingAdd(false);
-    setAuthOpen(false);
-    setAddOpen(true);
-  }, [isGuest, pendingAdd]);
-
   const openProject = (project) => navigation.navigate('Practice', { projectId: project.id });
 
-  const requireAccount = (next) => {
-    if (!isGuest) return next();
-    setPendingAdd(true);
-    try { globalThis?.sessionStorage?.setItem(AUTH_INTENT_KEY, 'add-project'); } catch {}
-    setAuthOpen(true);
-  };
-
-  const cancelAuthIntent = () => {
-    setPendingAdd(false);
-    try { globalThis?.sessionStorage?.removeItem(AUTH_INTENT_KEY); } catch {}
-    setAuthOpen(false);
-  };
+  const cancelAuthIntent = () => setAuthOpen(false);
 
   const importLocal = async () => {
-    if (isGuest) return requireAccount(() => {});
     setAddOpen(false);
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return Alert.alert('需要相簿權限', '請允許 JUST GROOVE 讀取影片，才能建立練舞專案。');
@@ -166,7 +141,6 @@ export default function HomeScreen({ navigation }) {
   };
 
   const importYoutube = () => {
-    if (isGuest) return requireAccount(() => {});
     const id = extractYouTubeId(youtubeUrl);
     if (!id) return setYoutubeError('請輸入正確的 YouTube 影片連結');
     try {
@@ -205,8 +179,8 @@ export default function HomeScreen({ navigation }) {
   return (
     <View style={[styles.container, { paddingTop: insets.top + 10 }]}>
       <View style={styles.header}><Pressable style={styles.brandLink} onPress={() => navigation.navigate('Home')} accessibilityLabel="返回 JUST GROOVE 首頁"><Image source={BRAND_LOGO} style={styles.brandIcon} contentFit="contain" /><View><Text style={styles.brand}>JUST GROOVE</Text><Text style={styles.subtitle}>{isGuest ? '訪客模式 · 選一段，開始練。' : `嗨，${user?.email?.split('@')[0] || '舞者'} · 選一段，開始練。`}</Text></View></Pressable><Pressable style={styles.headerButton} onPress={() => isGuest ? setAuthOpen(true) : signOut?.()} accessibilityLabel="帳號設定"><Ionicons name={isGuest ? 'person-outline' : 'person'} size={23} color={C.text} /></Pressable></View>
-      <Pressable style={styles.primary} onPress={() => requireAccount(() => setAddOpen(true))}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
-      <View style={styles.recordingHint} accessibilityLabel="錄影功能提示"><Ionicons name="radio-button-on" size={18} color={C.lime} /><View style={{ flex: 1 }}><Text style={styles.recordingHintTitle}>錄影在練舞畫面</Text><Text style={styles.recordingHintText}>開啟專案後，底部工具列會看到「錄影」。目前合成錄影需要桌面版 Chrome。</Text></View></View>
+      <Pressable style={styles.primary} onPress={() => setAddOpen(true)}><Ionicons name="add" size={24} color={C.bg} /><Text style={styles.primaryText}>新增練舞專案</Text></Pressable>
+      <View style={styles.recordingHint} accessibilityLabel="錄影功能提示"><Ionicons name="radio-button-on" size={18} color={C.lime} /><View style={{ flex: 1 }}><Text style={styles.recordingHintTitle}>錄影在練舞畫面</Text><Text style={styles.recordingHintText}>開啟專案後，底部工具列會看到「錄影」。目前合成錄影建議使用桌面版 Chrome 或 Edge。</Text></View></View>
       {storageError ? <View style={styles.storageWarning}><Ionicons name="shield-checkmark-outline" size={18} color={C.lime} /><Text style={styles.storageWarningText}>{storageError}</Text></View> : null}
       {!!syncStatus && <Text accessibilityLiveRegion="polite" style={{ color: C.lime, marginBottom: 10 }}>{syncStatus}</Text>}
       {!!storageError && <Pressable onPress={retrySync} style={styles.cancel}><Text style={styles.cancelText}>重新同步</Text></Pressable>}
@@ -232,7 +206,7 @@ export default function HomeScreen({ navigation }) {
       <Modal visible={Boolean(renameProject)} transparent animationType="fade" onRequestClose={() => setRenameProject(null)}><KeyboardAvoidingView style={styles.centeredBackdrop} behavior={Platform.OS === 'ios' ? 'padding' : undefined}><View style={styles.dialog}><Text style={styles.sheetTitle}>重新命名專案</Text><TextInput autoFocus value={renameValue} onChangeText={setRenameValue} style={styles.input} placeholder="輸入專案名稱" placeholderTextColor="#69696D" /><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setRenameProject(null)}><Text style={styles.cancelText}>取消</Text></Pressable><Pressable style={styles.confirm} onPress={confirmRename}><Text style={styles.confirmText}>儲存</Text></Pressable></View></View></KeyboardAvoidingView></Modal>
       <Modal visible={Boolean(deleteTarget)} transparent animationType="fade" onRequestClose={() => setDeleteTarget(null)}><View style={styles.centeredBackdrop}><View style={styles.dialog}><Text style={styles.sheetTitle}>刪除這個專案？</Text><Text style={styles.dialogCopy}>「{deleteTarget?.title}」的專案與雲端影片將被刪除，原始相簿影片保留。</Text><View style={styles.actions}><Pressable style={styles.cancel} onPress={() => setDeleteTarget(null)}><Text style={styles.cancelText}>保留</Text></Pressable><Pressable style={styles.dangerConfirm} disabled={deleting} onPress={confirmDelete}><Text style={styles.confirmText}>{deleting ? '刪除中…' : '刪除'}</Text></Pressable></View></View></View></Modal>
       <OnboardingOverlay userId={ownerId} visible={onboarding} onClose={() => setOnboarding(false)} />
-      <AuthModal visible={authOpen} contextMessage={pendingAdd ? '請先登入以儲存練舞專案，登入後會接著讓你選擇相簿或 YouTube。' : undefined} onClose={cancelAuthIntent} onAuthenticated={() => setAuthOpen(false)} onContinueGuest={cancelAuthIntent} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} />
+      <AuthModal visible={authOpen} onClose={cancelAuthIntent} onAuthenticated={() => setAuthOpen(false)} onContinueGuest={cancelAuthIntent} signInWithEmail={signInWithEmail} signUpWithEmail={signUpWithEmail} />
     </View>
   );
 }

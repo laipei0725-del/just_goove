@@ -82,6 +82,7 @@ const YouTubePlayerWeb = React.forwardRef(function YouTubePlayerWeb({ height, wi
     playVideo: () => { playerRef.current?.playVideo(); },
     pauseVideo: () => { playerRef.current?.pauseVideo(); },
     getPlaybackRate: () => Promise.resolve(playerRef.current ? playerRef.current.getPlaybackRate() : playbackRate),
+    setPlaybackRate: (rate) => { try { playerRef.current?.setPlaybackRate?.(rate); } catch {} },
   }), [playbackRate]);
 
   useEffect(() => {
@@ -385,8 +386,11 @@ export default function PracticeScreen({ route, navigation }) {
   const togglePlayback = useCallback(() => {
     if (source?.type === 'youtube' && !youtubeReady) return;
     keepYoutubeControlsVisible(true);
-    setPlaying((current) => !current);
-  }, [keepYoutubeControlsVisible, source?.type, youtubeReady]);
+    setPlaying((current) => {
+      if (!current && total > 0 && (position < trimStart || position >= timelineMaximum - 0.025)) seek(trimStart, true);
+      return !current;
+    });
+  }, [keepYoutubeControlsVisible, position, seek, source?.type, timelineMaximum, trimStart, total, youtubeReady]);
 
   const handleYoutubeStateChange = useCallback((state) => {
     if (state === 'playing') setPlaying(true);
@@ -518,11 +522,20 @@ export default function PracticeScreen({ route, navigation }) {
     if (trimDraft.b <= trimDraft.a) return;
     updateProject(project.id, { trimStart: trimDraft.a, trimEnd: trimDraft.b, abStart: null, abEnd: null, activeBookmarkId: null, playMode: 'full-loop' });
     setDraftA(null); setDraftB(null); setActiveBookmarkId(null); setPlayModeState('full-loop');
-    seek(trimDraft.a, true); setTrimOpen(false); setNotice('已套用剪輯範圍，原影片保持完整。');
+    seek(trimDraft.a, true); setTrimOpen(false); setPlaying(true); setNotice('已套用剪輯範圍，將只播放選定片段。');
   };
 
   const toggleCamera = async () => {
-    if (!cameraVisible && !cameraPermission?.granted) {
+    if (!cameraVisible && Platform.OS === 'web') {
+      try {
+        const stream = await navigator.mediaDevices?.getUserMedia?.({ video: { facingMode: 'user' }, audio: false });
+        stream?.getTracks?.().forEach((track) => track.stop());
+      } catch {
+        setNotice('請允許瀏覽器使用相機；Windows 請確認 Chrome/Edge 的網站相機權限與系統隱私權設定。');
+        return;
+      }
+    }
+    if (!cameraVisible && Platform.OS !== 'web' && !cameraPermission?.granted) {
       const permission = await requestCameraPermission();
       if (!permission.granted) return Alert.alert('需要相機權限', '請允許前鏡頭權限才能進行對照與錄影。');
     }
@@ -695,10 +708,6 @@ export default function PracticeScreen({ route, navigation }) {
         setNotice('目前瀏覽器不支援相機錄影。請改用桌面版 Chrome；iPhone Chrome 會在原生 App 版支援。');
         return;
       }
-      if (recordingContent !== 'camera' && source?.type !== 'local') {
-        setNotice('YouTube 先支援「只錄我的相機」；影片＋我的相機受跨來源限制，請先下載影片後匯入。');
-        return;
-      }
       if (source?.type === 'youtube' && !youtubeReady) {
         setNotice('YouTube 尚未載入完成，請等影片可播放後再錄影。');
         return;
@@ -713,12 +722,16 @@ export default function PracticeScreen({ route, navigation }) {
       try {
         const sourceVideo = source?.type === 'local' ? findPracticeVideoElement('practice-source-video') : null;
         const cameraVideo = await waitForPracticeVideoElement('practice-camera-video');
-        if (!cameraVideo) throw new Error('相機尚未準備好，請允許相機權限後再試。');
         const range = recordingRange();
         const startAt = Math.max(0, finiteNumber(range.start));
         const videoEnd = Number.isFinite(range.end) && range.end > startAt ? range.end : null;
         const endAt = videoEnd;
         await preparePlaybackForBrowserRecording(startAt, sourceVideo);
+        if (source?.type === 'youtube') {
+          try { ytRef.current?.setPlaybackRate?.(speed); } catch {}
+        }
+        const effectiveContent = source?.type === 'youtube' && recordingContent !== 'camera' ? 'camera' : recordingContent;
+        if (effectiveContent !== recordingContent) setNotice('YouTube 會同步播放選定範圍；因瀏覽器限制，輸出先改為只錄我的相機。');
         const effectiveAudio = source?.type === 'youtube' && recordingAudio === 'source' ? 'microphone' : recordingAudio;
         microphoneStream = effectiveAudio === 'microphone'
           ? await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
@@ -741,7 +754,7 @@ export default function PracticeScreen({ route, navigation }) {
           durationSeconds: Number.isFinite(endAt) && endAt > startAt ? (endAt - startAt) / Math.max(speed, 0.1) : null,
           playbackRate: speed,
           includeCamera: true,
-          content: recordingContent,
+          content: effectiveContent,
           audioSource: effectiveAudio,
           microphoneStream,
           onStopped: (result) => {
