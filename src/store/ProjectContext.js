@@ -46,6 +46,7 @@ const readableSyncError = (error, fallback = '同步失敗，請重試。') => {
   if (/failed to fetch|networkerror|load failed|fetch failed/i.test(message)) return '雲端連線失敗，請確認網路、Supabase 網址與 Storage 設定後再重新同步。';
   return message || fallback;
 };
+const hasPendingMedia = (project) => Boolean(project?.source?.cloudUploadPending || (project?.recordings || []).some((item) => item?.cloudUploadPending));
 
 export function ProjectProvider({ children }) {
   const { user, ready } = useAuth();
@@ -137,9 +138,12 @@ function OwnerProjects({ children, ownerId, authReady }) {
             const unchanged = JSON.stringify(current) === JSON.stringify(snapshot);
             const recordings = current.recordings.map((r) => {
               const uploaded = saved.recordings.find((s) => s.id === r.id);
-              return uploaded ? { ...r, storagePath: uploaded.storagePath } : r;
+              return uploaded ? { ...r, storagePath: uploaded.storagePath, cloudUploadPending: uploaded.cloudUploadPending } : r;
             });
-            publish(items.current.map((p) => p.id === id ? { ...p, source: { ...p.source, storagePath: saved.source?.storagePath }, recordings } : p));
+            publish(items.current.map((p) => {
+              const source = saved.source ? { ...p.source, storagePath: saved.source.storagePath, cloudUploadPending: saved.source.cloudUploadPending } : p.source;
+              return p.id === id ? { ...p, source, recordings } : p;
+            }));
             if (unchanged) dirty.current.delete(id);
             await persist();
             setStorageError(null);
@@ -149,7 +153,8 @@ function OwnerProjects({ children, ownerId, authReady }) {
           }
         }
         if (mounted.current) {
-          setSyncStatus(dirty.current.size ? '尚有變更待同步' : '已同步到雲端');
+          const pending = items.current.some(hasPendingMedia);
+          setSyncStatus(dirty.current.size ? '尚有變更待同步' : pending ? '專案設定已同步；影片待雲端空間建立後補上傳。' : '已同步到雲端');
           if (dirty.current.size) setRevision((n) => n + 1);
         }
       }).catch((error) => { if (mounted.current) setStorageError(readableSyncError(error)); });
@@ -212,6 +217,7 @@ function OwnerProjects({ children, ownerId, authReady }) {
   }, [addProject]);
   const retrySync = () => {
     setStorageError(null);
+    items.current.filter(hasPendingMedia).forEach((project) => dirty.current.add(project.id));
     if (cloud && !cloudReady.current) setLoadAttempt((n) => n + 1);
     else { persist().catch(() => setStorageError('本機儲存失敗。')); setRevision((n) => n + 1); }
   };

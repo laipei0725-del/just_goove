@@ -1,9 +1,12 @@
 // Keep durable Storage paths in data; signed URLs are temporary playback credentials.
 export const BUCKET = 'user-videos';
+const mediaUploadPending = (item) => item ? { ...item, uri: null, cloudUploadPending: true } : item;
 export const serializeProject = (project) => {
-  const media = (item) => item?.storagePath ? { ...item, uri: null } : item;
+  const media = (item) => item?.storagePath || item?.cloudUploadPending ? { ...item, uri: null } : item;
   return { ...project, source: media(project.source), recordings: (project.recordings || []).map(media) };
 };
+
+const isMediaUploadUnavailable = (error) => /雲端影片空間尚未建立|bucket not found|nosuchbucket|failed to fetch|fetch failed|networkerror|load failed|無法讀取原始影片/i.test(String(error?.message || error || ''));
 
 export function createCloudProjects(client, uploadFile) {
   const check = (result) => { if (result.error) throw result.error; return result.data; };
@@ -24,14 +27,19 @@ export function createCloudProjects(client, uploadFile) {
     await assertOwner(owner);
     const upload = async (item, name) => {
       if (!item || item.storagePath) return item;
-      if (!item.uri) throw new Error('找不到影片，請重新選取原始影片。');
-      const response = await fetch(item.uri);
-      if (!response.ok) throw new Error('無法讀取原始影片，請重新選取。');
-      const blob = await response.blob();
-      const path = `${owner}/${project.id}/${name}`;
-      await uploadFile(path, blob, progress, owner);
-      await assertOwner(owner);
-      return { ...item, storagePath: path };
+      if (!item.uri) return mediaUploadPending(item);
+      try {
+        const response = await fetch(item.uri);
+        if (!response.ok) throw new Error('無法讀取原始影片，請重新選取。');
+        const blob = await response.blob();
+        const path = `${owner}/${project.id}/${name}`;
+        await uploadFile(path, blob, progress, owner);
+        await assertOwner(owner);
+        return { ...item, storagePath: path, cloudUploadPending: false };
+      } catch (error) {
+        if (isMediaUploadUnavailable(error)) return mediaUploadPending(item);
+        throw error;
+      }
     };
     const source = project.source?.type === 'local' ? await upload(project.source, 'original') : project.source;
     const recordings = [];

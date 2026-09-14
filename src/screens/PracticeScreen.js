@@ -260,6 +260,7 @@ export default function PracticeScreen({ route, navigation }) {
   const timelineValue = clamp(position, trimStart, timelineMaximum);
   const activeAbRange = draftA != null && draftB > draftA ? { start: draftA, end: draftB } : activeBookmark;
   const editing = panelOpen || trimOpen || speedOpen || Boolean(nameDialog);
+  const visibleSyncStatus = /正在同步|上傳中/.test(syncStatus || '') ? syncStatus : '';
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -908,7 +909,7 @@ export default function PracticeScreen({ route, navigation }) {
         </View>}
 
       </View>
-      {!!(storageError || notice || syncStatus) && <View style={styles.notice} accessibilityLiveRegion="polite"><Text style={styles.noticeText}>{storageError || notice || syncStatus}</Text>{!!storageError && <Pressable onPress={retrySync}><Text style={styles.noticeText}>重新同步</Text></Pressable>}</View>}
+      {!!(storageError || notice || visibleSyncStatus) && <View style={styles.notice} accessibilityLiveRegion="polite"><Text style={styles.noticeText}>{storageError || notice || visibleSyncStatus}</Text>{!!storageError && <Pressable onPress={retrySync}><Text style={styles.noticeText}>重新同步</Text></Pressable>}</View>}
 
       <Modal visible={Boolean(recordingResult)} transparent animationType="fade" onRequestClose={() => setRecordingResult(null)}>
         <View style={styles.recordingModalBackdrop}><View style={styles.recordingModal}>
