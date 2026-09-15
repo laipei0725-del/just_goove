@@ -14,9 +14,14 @@ export default class AppErrorBoundary extends React.Component {
     if (this.state.error && previousProps.resetKey !== this.props.resetKey) this.setState({ error: null });
   }
 
+  retry = () => {
+    this.setState({ error: null });
+    if (this.props.reloadOnRetry && typeof window !== 'undefined') window.location.reload();
+  };
+
   render() {
     if (!this.state.error) return this.props.children;
-    return <View style={styles.card}><Text style={styles.title}>這個內容暫時無法顯示</Text><Text style={styles.copy}>其他功能仍可正常使用，請重新載入此內容。</Text><Pressable style={styles.button} onPress={() => this.setState({ error: null })}><Text style={styles.buttonText}>重試</Text></Pressable></View>;
+    return <View style={styles.card}><Text style={styles.title}>這個內容暫時無法顯示</Text><Text style={styles.copy}>其他功能仍可正常使用，請重新載入此內容。</Text><Pressable style={styles.button} onPress={this.retry}><Text style={styles.buttonText}>重試</Text></Pressable></View>;
   }
 }
 

@@ -34,7 +34,7 @@ export default function App() {
     <SafeAreaProvider>
       <AuthProvider>
         <ProjectProvider>
-          <AppErrorBoundary>
+          <AppErrorBoundary reloadOnRetry>
             <NavigationContainer theme={theme}>
               <Stack.Navigator initialRouteName="Landing" screenOptions={{ headerShown: false, contentStyle: { backgroundColor: '#0D0D0D' } }}>
                 <Stack.Screen name="Landing" component={LandingScreen} />

@@ -9,36 +9,45 @@ const STORAGE_KEY = '@just-groove/projects-v1';
 const STORAGE_PREFIX = '@just-groove/projects-v2:';
 const ProjectContext = createContext(null);
 
-const normalizeProject = (project) => ({
-  id: project.id || `${Date.now()}`,
-  title: project.title || '未命名練習',
-  source: project.source,
-  coverUri: project.coverUri || null,
-  thumbnailKey: project.thumbnailKey || null,
-  durationMs: Number.isFinite(project.durationMs) ? project.durationMs : null,
-  createdAt: project.createdAt || project.updatedAt || Date.now(),
-  speed: project.speed || 1,
-  position: project.position || 0,
-  crop: project.crop || 'contain',
-  aspectRatio: project.aspectRatio || 'auto',
-  playMode: project.playMode || 'full-loop',
-  trimStart: Number.isFinite(project.trimStart) ? project.trimStart : 0,
-  trimEnd: Number.isFinite(project.trimEnd) ? project.trimEnd : 0,
-  mirrored: Boolean(project.mirrored),
-  abStart: Number.isFinite(project.abStart) ? project.abStart : null,
-  abEnd: Number.isFinite(project.abEnd) ? project.abEnd : null,
-  activeBookmarkId: project.activeBookmarkId || null,
-  frameStep: [24, 30, 60].includes(project.frameStep) ? project.frameStep : 30,
-  skipSeconds: project.skipSeconds || 5,
-  cameraMode: project.cameraMode || 'pip',
-  recordingContent: project.recordingContent || 'camera',
-  recordingAudio: project.recordingAudio || 'source',
-  bookmarks: project.bookmarks || [],
-  recordings: project.recordings || [],
-  updatedAt: project.updatedAt || Date.now(),
-  pinned: Boolean(project.pinned),
-  ownerId: project.ownerId || 'guest',
-});
+const safeArray = (value) => Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
+const safeMedia = (value) => {
+  if (!value || typeof value !== 'object') return null;
+  const type = value.type === 'youtube' ? 'youtube' : value.type === 'local' ? 'local' : null;
+  return type ? { ...value, type } : null;
+};
+const normalizeProject = (input) => {
+  const project = input && typeof input === 'object' ? input : {};
+  return {
+    id: String(project.id || `${Date.now()}`),
+    title: typeof project.title === 'string' && project.title.trim() ? project.title : '未命名練習',
+    source: safeMedia(project.source),
+    coverUri: typeof project.coverUri === 'string' ? project.coverUri : null,
+    thumbnailKey: typeof project.thumbnailKey === 'string' ? project.thumbnailKey : null,
+    durationMs: Number.isFinite(project.durationMs) ? project.durationMs : null,
+    createdAt: Number.isFinite(project.createdAt) ? project.createdAt : Number.isFinite(project.updatedAt) ? project.updatedAt : Date.now(),
+    speed: Number.isFinite(project.speed) && project.speed > 0 ? project.speed : 1,
+    position: Number.isFinite(project.position) ? Math.max(0, project.position) : 0,
+    crop: project.crop === 'cover' ? 'cover' : 'contain',
+    aspectRatio: ['auto', '9:16', '16:9', '1:1'].includes(project.aspectRatio) ? project.aspectRatio : 'auto',
+    playMode: project.playMode === 'ab-loop' ? 'ab-loop' : 'full-loop',
+    trimStart: Number.isFinite(project.trimStart) ? Math.max(0, project.trimStart) : 0,
+    trimEnd: Number.isFinite(project.trimEnd) ? Math.max(0, project.trimEnd) : 0,
+    mirrored: Boolean(project.mirrored),
+    abStart: Number.isFinite(project.abStart) ? Math.max(0, project.abStart) : null,
+    abEnd: Number.isFinite(project.abEnd) ? Math.max(0, project.abEnd) : null,
+    activeBookmarkId: project.activeBookmarkId || null,
+    frameStep: [24, 30, 60].includes(project.frameStep) ? project.frameStep : 30,
+    skipSeconds: [5, 10, 15].includes(project.skipSeconds) ? project.skipSeconds : 5,
+    cameraMode: ['pip', 'overlay', 'split'].includes(project.cameraMode) ? project.cameraMode : 'pip',
+    recordingContent: project.recordingContent === 'composite' ? 'composite' : 'camera',
+    recordingAudio: ['source', 'microphone', 'muted'].includes(project.recordingAudio) ? project.recordingAudio : 'source',
+    bookmarks: safeArray(project.bookmarks),
+    recordings: safeArray(project.recordings),
+    updatedAt: Number.isFinite(project.updatedAt) ? project.updatedAt : Date.now(),
+    pinned: Boolean(project.pinned),
+    ownerId: project.ownerId || 'guest',
+  };
+};
 
 const readableSyncError = (error, fallback = '同步失敗，請重試。') => {
   const message = String(error?.message || error || '');
